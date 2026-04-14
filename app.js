@@ -1,6 +1,12 @@
 const HOLD_DELAY_MS = 900;
+const MISS_GRACE_MS = 180;
+const DESKTOP_FRAME_INTERVAL_MS = 28;
+const MOBILE_FRAME_INTERVAL_MS = 42;
+const LOW_POWER_FRAME_INTERVAL_MS = 56;
 const POSITION_THRESHOLD = 28;
 const SIZE_THRESHOLD = 34;
+const SHAPE_SMOOTHING = 0.34;
+const MOBILE_BREAKPOINT = 820;
 const TAU = Math.PI * 2;
 const STAR_STEP = Math.PI / 5;
 const HAND_CONNECTIONS = [
@@ -13,37 +19,90 @@ const HAND_CONNECTIONS = [
 ];
 
 const videoEl = document.querySelector(".input-video");
+const freezeCanvasEl = document.querySelector(".freeze-canvas");
 const canvasEl = document.querySelector(".output-canvas");
-const ctx = canvasEl.getContext("2d");
+const freezeCtx = freezeCanvasEl.getContext("2d", { alpha: false, desynchronized: true });
+const ctx = canvasEl.getContext("2d", { alpha: true, desynchronized: true });
 const loadingEl = document.getElementById("loading");
 const errorEl = document.getElementById("error-screen");
 const retryBtn = document.getElementById("retry-btn");
 const captureBtn = document.getElementById("capture-btn");
 const clearBtn = document.getElementById("clear-btn");
+const guideBtn = document.getElementById("guide-btn");
+const guidePanel = document.getElementById("guide-panel");
 const cameraStatusEl = document.getElementById("camera-status");
 const gestureTagEl = document.getElementById("gesture-tag");
 const toastEl = document.getElementById("toast");
 const flashOverlayEl = document.getElementById("flash-overlay");
 
-const frozenCanvas = document.createElement("canvas");
-const frozenCtx = frozenCanvas.getContext("2d");
-
 const state = {
     hands: null,
+    handsLibraryPromise: null,
     stream: null,
     rafId: 0,
+    useVideoFrameCallback: false,
     bootPromise: null,
+    lastProcessedAt: 0,
     processing: false,
     cameraRunning: false,
+    lowPowerMode: false,
+    performanceProfile: null,
     activeShape: null,
     activeLabel: "",
+    trackingShape: null,
+    trackingLabel: "",
     lockedShape: null,
     lockedLabel: "",
-    previousShape: null,
     stableSince: 0,
+    lastDetectionAt: 0,
+    guideOpen: false,
+    compactLayout: false,
     progress: 0,
     toastTimer: 0
 };
+
+function isLowPowerDevice() {
+    const memory = navigator.deviceMemory ?? 0;
+    const cores = navigator.hardwareConcurrency ?? 0;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+    return reducedMotion || (memory > 0 && memory <= 4) || (cores > 0 && cores <= 4);
+}
+
+function buildPerformanceProfile() {
+    const compactLayout = window.innerWidth <= MOBILE_BREAKPOINT;
+    const lowPowerMode = compactLayout || isLowPowerDevice();
+
+    return {
+        compactLayout,
+        lowPowerMode,
+        frameIntervalMs: lowPowerMode
+            ? LOW_POWER_FRAME_INTERVAL_MS
+            : compactLayout
+                ? MOBILE_FRAME_INTERVAL_MS
+                : DESKTOP_FRAME_INTERVAL_MS,
+        drawGuides: !compactLayout && !lowPowerMode,
+        videoConstraints: lowPowerMode
+            ? {
+                facingMode: "user",
+                width: { ideal: 960 },
+                height: { ideal: 540 },
+                frameRate: { ideal: 24, max: 30 }
+            }
+            : {
+                facingMode: "user",
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                frameRate: { ideal: 30, max: 30 }
+            },
+        handsOptions: {
+            maxNumHands: 2,
+            modelComplexity: lowPowerMode ? 0 : 1,
+            minDetectionConfidence: lowPowerMode ? 0.55 : 0.6,
+            minTrackingConfidence: lowPowerMode ? 0.45 : 0.5
+        }
+    };
+}
 
 function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
@@ -51,6 +110,70 @@ function clamp(value, min, max) {
 
 function distance(a, b) {
     return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function lerp(start, end, amount) {
+    return start + (end - start) * amount;
+}
+
+function normalizeAngle(angle) {
+    let nextAngle = angle;
+    while (nextAngle > Math.PI) {
+        nextAngle -= TAU;
+    }
+    while (nextAngle < -Math.PI) {
+        nextAngle += TAU;
+    }
+    return nextAngle;
+}
+
+function lerpAngle(start, end, amount) {
+    return start + normalizeAngle(end - start) * amount;
+}
+
+function clonePoint(point) {
+    return { x: point.x, y: point.y };
+}
+
+function cloneShape(shape) {
+    if (shape.type === "ellipse") {
+        return { ...shape };
+    }
+
+    return {
+        ...shape,
+        points: shape.points.map(clonePoint)
+    };
+}
+
+function interpolateShape(currentShape, nextShape, amount) {
+    if (!currentShape || currentShape.type !== nextShape.type) {
+        return cloneShape(nextShape);
+    }
+
+    if (nextShape.type === "ellipse") {
+        return {
+            ...nextShape,
+            cx: lerp(currentShape.cx, nextShape.cx, amount),
+            cy: lerp(currentShape.cy, nextShape.cy, amount),
+            rx: lerp(currentShape.rx, nextShape.rx, amount),
+            ry: lerp(currentShape.ry, nextShape.ry, amount),
+            angle: lerpAngle(currentShape.angle, nextShape.angle, amount)
+        };
+    }
+
+    return {
+        ...nextShape,
+        cx: lerp(currentShape.cx, nextShape.cx, amount),
+        cy: lerp(currentShape.cy, nextShape.cy, amount),
+        points: nextShape.points.map((point, index) => {
+            const currentPoint = currentShape.points[index] ?? point;
+            return {
+                x: lerp(currentPoint.x, point.x, amount),
+                y: lerp(currentPoint.y, point.y, amount)
+            };
+        })
+    };
 }
 
 function getMirroredPoint(landmarks, index, width, height) {
@@ -168,13 +291,35 @@ function getShapeBounds(shape) {
     };
 }
 
-function areShapesStable(shapeA, shapeB) {
+function measureShapeDelta(shapeA, shapeB) {
     if (!shapeA || !shapeB || shapeA.type !== shapeB.type) {
-        return false;
+        return Number.POSITIVE_INFINITY;
     }
 
-    return distance(shapeA, shapeB) < POSITION_THRESHOLD &&
-        Math.abs(getShapeRadius(shapeA) - getShapeRadius(shapeB)) < SIZE_THRESHOLD;
+    const centerDelta = distance(shapeA, shapeB);
+
+    if (shapeA.type === "ellipse") {
+        const sizeDelta = Math.abs(shapeA.rx - shapeB.rx) * 0.5 +
+            Math.abs(shapeA.ry - shapeB.ry) * 0.5;
+        const angleDelta = Math.abs(normalizeAngle(shapeA.angle - shapeB.angle)) * 18;
+        return centerDelta * 0.55 + sizeDelta + angleDelta;
+    }
+
+    const pointDelta = shapeA.points.reduce((sum, point, index) => {
+        const nextPoint = shapeB.points[index] ?? point;
+        return sum + distance(point, nextPoint);
+    }, 0) / shapeA.points.length;
+
+    return centerDelta * 0.35 + pointDelta * 0.65;
+}
+
+function getShapeTolerance(shapeA, shapeB = shapeA) {
+    const averageRadius = (getShapeRadius(shapeA) + getShapeRadius(shapeB)) / 2;
+    return Math.max(POSITION_THRESHOLD, averageRadius * 0.18) + SIZE_THRESHOLD * 0.2;
+}
+
+function areShapesStable(shapeA, shapeB) {
+    return measureShapeDelta(shapeA, shapeB) < getShapeTolerance(shapeA, shapeB);
 }
 
 function buildTriangleShape(landmarks, width, height) {
@@ -363,23 +508,22 @@ function paintSource(source, width, height, mirrored, options = {}) {
     ctx.drawImage(source, drawX, drawY, drawWidth, drawHeight);
 }
 
-function drawBackground(source, width, height, mirrored) {
-    ctx.save();
-    paintSource(source, width, height, mirrored);
-    ctx.restore();
-}
-
 function drawGlassEffect(source, width, height, shape, mirrored, locked, progress) {
     const bounds = getShapeBounds(shape);
     const radius = getShapeRadius(shape);
     const now = performance.now() * 0.001;
     const shimmerOffset = Math.sin(now * 1.7 + shape.cx * 0.01) * 18;
     const strokeAlpha = locked ? 0.96 : 0.46 + progress * 0.44;
+    const lowPower = state.lowPowerMode;
+    const shadowBlur = lowPower ? 12 : state.compactLayout ? 18 : 28;
+    const blurAmount = locked
+        ? (lowPower ? 10 : state.compactLayout ? 15 : 20)
+        : (lowPower ? 6 + progress * 4 : state.compactLayout ? 10 + progress * 6 : 13 + progress * 8);
 
     ctx.save();
     buildShapePath(shape);
     ctx.shadowColor = "rgba(0, 0, 0, 0.36)";
-    ctx.shadowBlur = 32;
+    ctx.shadowBlur = shadowBlur;
     ctx.fillStyle = "rgba(7, 14, 24, 0.22)";
     ctx.fill();
     ctx.restore();
@@ -389,7 +533,7 @@ function drawGlassEffect(source, width, height, shape, mirrored, locked, progres
     ctx.clip();
 
     ctx.save();
-    ctx.filter = `blur(${locked ? 22 : 14 + progress * 10}px) saturate(1.26) brightness(1.08)`;
+    ctx.filter = `blur(${blurAmount}px) saturate(1.26) brightness(1.08)`;
     paintSource(source, width, height, mirrored, {
         scale: 1.06 + progress * 0.03,
         focusX: shape.cx,
@@ -397,32 +541,28 @@ function drawGlassEffect(source, width, height, shape, mirrored, locked, progres
     });
     ctx.restore();
 
-    ctx.save();
-    ctx.globalCompositeOperation = "screen";
     const fillGradient = ctx.createLinearGradient(bounds.left, bounds.top, bounds.right, bounds.bottom);
-    fillGradient.addColorStop(0, "rgba(124, 247, 255, 0.24)");
-    fillGradient.addColorStop(0.35, "rgba(255, 255, 255, 0.08)");
-    fillGradient.addColorStop(0.68, "rgba(255, 191, 105, 0.12)");
-    fillGradient.addColorStop(1, "rgba(255, 141, 183, 0.18)");
+    fillGradient.addColorStop(0, "rgba(124, 247, 255, 0.22)");
+    fillGradient.addColorStop(0.4, lowPower ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.08)");
+    fillGradient.addColorStop(1, "rgba(255, 191, 105, 0.12)");
     ctx.fillStyle = fillGradient;
-    ctx.fillRect(bounds.left - 24, bounds.top - 24, bounds.right - bounds.left + 48, bounds.bottom - bounds.top + 48);
-    ctx.restore();
+    ctx.fillRect(bounds.left - 16, bounds.top - 16, bounds.right - bounds.left + 32, bounds.bottom - bounds.top + 32);
 
-    ctx.save();
-    const sheen = ctx.createLinearGradient(
-        bounds.left - shimmerOffset,
-        bounds.top,
-        bounds.right + shimmerOffset,
-        bounds.bottom
-    );
-    sheen.addColorStop(0, "rgba(255, 255, 255, 0)");
-    sheen.addColorStop(0.22, "rgba(255, 255, 255, 0.12)");
-    sheen.addColorStop(0.5, "rgba(255, 255, 255, 0.22)");
-    sheen.addColorStop(0.78, "rgba(255, 255, 255, 0.08)");
-    sheen.addColorStop(1, "rgba(255, 255, 255, 0)");
-    ctx.fillStyle = sheen;
-    ctx.fillRect(bounds.left - 32, bounds.top - 32, bounds.right - bounds.left + 64, bounds.bottom - bounds.top + 64);
-    ctx.restore();
+    if (!lowPower) {
+        const sheen = ctx.createLinearGradient(
+            bounds.left - shimmerOffset,
+            bounds.top,
+            bounds.right + shimmerOffset,
+            bounds.bottom
+        );
+        sheen.addColorStop(0, "rgba(255, 255, 255, 0)");
+        sheen.addColorStop(0.22, "rgba(255, 255, 255, 0.12)");
+        sheen.addColorStop(0.5, "rgba(255, 255, 255, 0.22)");
+        sheen.addColorStop(0.78, "rgba(255, 255, 255, 0.08)");
+        sheen.addColorStop(1, "rgba(255, 255, 255, 0)");
+        ctx.fillStyle = sheen;
+        ctx.fillRect(bounds.left - 24, bounds.top - 24, bounds.right - bounds.left + 48, bounds.bottom - bounds.top + 48);
+    }
 
     ctx.restore();
 
@@ -432,7 +572,7 @@ function drawGlassEffect(source, width, height, shape, mirrored, locked, progres
     bevel.addColorStop(0, `rgba(255, 255, 255, ${strokeAlpha})`);
     bevel.addColorStop(0.4, "rgba(124, 247, 255, 0.18)");
     bevel.addColorStop(1, "rgba(255, 255, 255, 0.42)");
-    ctx.lineWidth = locked ? 7 : 3 + progress * 4;
+    ctx.lineWidth = locked ? (lowPower ? 4.5 : 7) : (lowPower ? 2.5 : 3) + progress * (lowPower ? 2.5 : 4);
     ctx.strokeStyle = bevel;
     ctx.stroke();
     ctx.restore();
@@ -444,21 +584,27 @@ function drawGlassEffect(source, width, height, shape, mirrored, locked, progres
     ctx.stroke();
     ctx.restore();
 
-    ctx.save();
-    ctx.beginPath();
-    if (shape.type === "ellipse") {
-        ctx.ellipse(shape.cx, shape.cy, shape.rx * 1.14, shape.ry * 1.14, shape.angle, 0, TAU);
-    } else {
-        ctx.ellipse(shape.cx, shape.cy, radius * 1.12, radius * 1.12, 0, 0, TAU);
+    if (!lowPower) {
+        ctx.save();
+        ctx.beginPath();
+        if (shape.type === "ellipse") {
+            ctx.ellipse(shape.cx, shape.cy, shape.rx * 1.14, shape.ry * 1.14, shape.angle, 0, TAU);
+        } else {
+            ctx.ellipse(shape.cx, shape.cy, radius * 1.12, radius * 1.12, 0, 0, TAU);
+        }
+        ctx.strokeStyle = locked ? "rgba(124, 247, 255, 0.22)" : `rgba(124, 247, 255, ${0.08 + progress * 0.12})`;
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([10, 12]);
+        ctx.stroke();
+        ctx.restore();
     }
-    ctx.strokeStyle = locked ? "rgba(124, 247, 255, 0.22)" : `rgba(124, 247, 255, ${0.08 + progress * 0.12})`;
-    ctx.lineWidth = 1.4;
-    ctx.setLineDash([10, 12]);
-    ctx.stroke();
-    ctx.restore();
 }
 
 function drawProgressHalo(shape, progress) {
+    if (state.lowPowerMode && progress < 0.16) {
+        return;
+    }
+
     const radius = getShapeRadius(shape) * 1.16;
     const haloRy = shape.type === "ellipse" ? shape.ry * 1.16 : radius;
     const haloRx = shape.type === "ellipse" ? shape.rx * 1.16 : radius;
@@ -475,10 +621,12 @@ function drawProgressHalo(shape, progress) {
     ctx.beginPath();
     ctx.ellipse(shape.cx, shape.cy, haloRx, haloRy, rotation, -Math.PI / 2, -Math.PI / 2 + TAU * progress);
     ctx.strokeStyle = `rgba(87, 227, 209, ${0.5 + progress * 0.4})`;
-    ctx.lineWidth = 3.2;
+    ctx.lineWidth = state.lowPowerMode ? 2.2 : 3.2;
     ctx.setLineDash([]);
-    ctx.shadowColor = "rgba(87, 227, 209, 0.48)";
-    ctx.shadowBlur = 14;
+    if (!state.lowPowerMode) {
+        ctx.shadowColor = "rgba(87, 227, 209, 0.48)";
+        ctx.shadowBlur = 14;
+    }
     ctx.stroke();
     ctx.restore();
 }
@@ -512,7 +660,6 @@ function drawHandGuides(handLandmarks, width, height) {
 
 function drawFrame(source, width, height, mirrored, handLandmarks) {
     ctx.clearRect(0, 0, width, height);
-    drawBackground(source, width, height, mirrored);
 
     const shape = state.lockedShape || state.activeShape;
     if (shape) {
@@ -523,7 +670,7 @@ function drawFrame(source, width, height, mirrored, handLandmarks) {
         drawProgressHalo(state.activeShape, state.progress);
     }
 
-    if (handLandmarks.length && !state.lockedShape) {
+    if (handLandmarks.length && !state.lockedShape && state.performanceProfile?.drawGuides) {
         drawHandGuides(handLandmarks, width, height);
     }
 }
@@ -557,6 +704,67 @@ function toggleClearButton() {
     clearBtn.classList.toggle("is-hidden", !state.lockedShape);
 }
 
+function setFreezeVisible(isVisible) {
+    freezeCanvasEl.classList.toggle("is-visible", isVisible);
+}
+
+function loadHandsLibrary() {
+    if (typeof Hands === "function") {
+        return Promise.resolve();
+    }
+
+    if (state.handsLibraryPromise) {
+        return state.handsLibraryPromise;
+    }
+
+    state.handsLibraryPromise = new Promise((resolve, reject) => {
+        const existingScript = document.querySelector("script[data-hands-lib='true']");
+        if (existingScript) {
+            existingScript.addEventListener("load", resolve, { once: true });
+            existingScript.addEventListener("error", () => reject(new Error("Không tải được MediaPipe Hands.")), { once: true });
+            return;
+        }
+
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
+        script.async = true;
+        script.crossOrigin = "anonymous";
+        script.dataset.handsLib = "true";
+        script.addEventListener("load", resolve, { once: true });
+        script.addEventListener("error", () => reject(new Error("Không tải được MediaPipe Hands.")), { once: true });
+        document.head.appendChild(script);
+    });
+
+    state.handsLibraryPromise = state.handsLibraryPromise.catch((error) => {
+        state.handsLibraryPromise = null;
+        throw error;
+    });
+
+    return state.handsLibraryPromise;
+}
+
+function setGuideOpen(nextOpen) {
+    const shouldOpen = Boolean(nextOpen) && state.compactLayout;
+    state.guideOpen = shouldOpen;
+    guidePanel.classList.toggle("is-open", shouldOpen);
+    guideBtn.setAttribute("aria-expanded", String(shouldOpen));
+}
+
+function syncLayoutMode() {
+    state.performanceProfile = buildPerformanceProfile();
+    state.compactLayout = state.performanceProfile.compactLayout;
+    state.lowPowerMode = state.performanceProfile.lowPowerMode;
+    document.body.classList.toggle("is-low-power", state.lowPowerMode);
+
+    if (state.hands) {
+        state.hands.setOptions(state.performanceProfile.handsOptions);
+    }
+
+    if (!state.compactLayout) {
+        setGuideOpen(false);
+    }
+}
+
 function showToast(message) {
     window.clearTimeout(state.toastTimer);
     toastEl.textContent = message;
@@ -573,32 +781,63 @@ function triggerFlash() {
     }, 140);
 }
 
+function resetTracking() {
+    state.activeShape = null;
+    state.activeLabel = "";
+    state.trackingShape = null;
+    state.trackingLabel = "";
+    state.stableSince = 0;
+    state.lastDetectionAt = 0;
+    state.progress = 0;
+}
+
+function updateLiveStatus() {
+    if (!state.cameraRunning) {
+        return;
+    }
+
+    if (state.lockedShape) {
+        setCameraStatus("Đã khóa khung kính", "is-lock");
+        return;
+    }
+
+    if (state.activeLabel) {
+        const percent = Math.max(1, Math.round(state.progress * 100));
+        if (state.progress >= 0.08) {
+            setCameraStatus(`Giữ ổn định ${state.activeLabel} ${percent}%`, "is-live");
+        } else {
+            setCameraStatus(`Đang nhận diện ${state.activeLabel}`, "is-waiting");
+        }
+        return;
+    }
+
+    setCameraStatus("Đưa tay vào khung", "is-waiting");
+}
+
 function clearLock() {
     state.lockedShape = null;
     state.lockedLabel = "";
-    state.activeShape = null;
-    state.activeLabel = "";
-    state.previousShape = null;
-    state.stableSince = 0;
-    state.progress = 0;
+    setFreezeVisible(false);
+    resetTracking();
     toggleClearButton();
     setGestureTag("");
-    if (state.cameraRunning) {
-        setCameraStatus("Camera đang chạy", "is-live");
-    }
+    updateLiveStatus();
 }
 
 function copyCurrentFrameToFrozen(width, height) {
-    frozenCanvas.width = width;
-    frozenCanvas.height = height;
+    freezeCanvasEl.width = width;
+    freezeCanvasEl.height = height;
     frozenCtx.clearRect(0, 0, width, height);
     frozenCtx.save();
     frozenCtx.scale(-1, 1);
     frozenCtx.drawImage(videoEl, -width, 0, width, height);
     frozenCtx.restore();
+    setFreezeVisible(true);
 }
 
 function handleGestureState(detected) {
+    const now = performance.now();
+
     if (state.lockedShape) {
         state.activeShape = null;
         state.activeLabel = "";
@@ -607,40 +846,42 @@ function handleGestureState(detected) {
     }
 
     if (!detected) {
-        state.activeShape = null;
-        state.activeLabel = "";
-        state.previousShape = null;
-        state.stableSince = 0;
-        state.progress = 0;
+        if (state.activeShape && now - state.lastDetectionAt <= MISS_GRACE_MS) {
+            state.progress = Math.max(state.progress - 0.02, 0.04);
+            return;
+        }
+
+        resetTracking();
         return;
     }
 
-    const now = performance.now();
-    if (!areShapesStable(detected.shape, state.previousShape)) {
-        state.previousShape = detected.shape;
+    state.lastDetectionAt = now;
+    state.activeShape = interpolateShape(state.activeShape, detected.shape, SHAPE_SMOOTHING);
+    state.activeLabel = detected.label;
+
+    const hasStableCandidate = state.trackingShape &&
+        state.trackingLabel === detected.label &&
+        areShapesStable(detected.shape, state.trackingShape);
+
+    if (!hasStableCandidate) {
+        state.trackingShape = cloneShape(detected.shape);
+        state.trackingLabel = detected.label;
         state.stableSince = now;
-        state.activeShape = detected.shape;
-        state.activeLabel = detected.label;
         state.progress = 0.02;
         return;
     }
 
-    state.previousShape = detected.shape;
-    state.activeShape = detected.shape;
-    state.activeLabel = detected.label;
+    state.trackingShape = cloneShape(detected.shape);
     state.progress = clamp((now - state.stableSince) / HOLD_DELAY_MS, 0, 1);
 
     if (state.progress >= 1 && canvasEl.width && canvasEl.height) {
-        state.lockedShape = detected.shape;
+        state.lockedShape = cloneShape(state.activeShape ?? detected.shape);
         state.lockedLabel = detected.label;
-        state.activeShape = null;
-        state.activeLabel = "";
-        state.previousShape = null;
-        state.stableSince = 0;
-        state.progress = 1;
         copyCurrentFrameToFrozen(canvasEl.width, canvasEl.height);
+        resetTracking();
+        state.progress = 1;
         toggleClearButton();
-        setCameraStatus("Đã khóa khung kính", "is-lock");
+        setGuideOpen(false);
         showToast("Đã khóa khung kính. Nhấn Esc để xóa.");
     }
 }
@@ -655,6 +896,10 @@ function onResults(results) {
     if (canvasEl.width !== width || canvasEl.height !== height) {
         canvasEl.width = width;
         canvasEl.height = height;
+        if (!state.lockedShape) {
+            freezeCanvasEl.width = width;
+            freezeCanvasEl.height = height;
+        }
     }
 
     toggleLoading(false);
@@ -665,7 +910,7 @@ function onResults(results) {
 
     handleGestureState(detected);
 
-    const source = state.lockedShape ? frozenCanvas : videoEl;
+    const source = state.lockedShape ? freezeCanvasEl : videoEl;
     const isSourceMirrored = !state.lockedShape;
     drawFrame(source, width, height, isSourceMirrored, landmarks);
 
@@ -673,17 +918,52 @@ function onResults(results) {
         setGestureTag(state.lockedLabel);
     } else {
         setGestureTag(state.activeLabel);
-        setCameraStatus("Camera đang chạy", "is-live");
     }
+
+    updateLiveStatus();
 }
 
-async function frameLoop() {
+function scheduleNextFrame() {
     if (!state.cameraRunning) {
         return;
     }
 
-    if (!state.processing && videoEl.readyState >= 2) {
+    if (typeof videoEl.requestVideoFrameCallback === "function") {
+        state.useVideoFrameCallback = true;
+        state.rafId = videoEl.requestVideoFrameCallback(() => {
+            frameLoop();
+        });
+        return;
+    }
+
+    state.useVideoFrameCallback = false;
+    state.rafId = window.requestAnimationFrame(() => {
+        frameLoop();
+    });
+}
+
+function cancelScheduledFrame() {
+    if (state.useVideoFrameCallback && typeof videoEl.cancelVideoFrameCallback === "function") {
+        videoEl.cancelVideoFrameCallback(state.rafId);
+    } else {
+        window.cancelAnimationFrame(state.rafId);
+    }
+
+    state.rafId = 0;
+    state.useVideoFrameCallback = false;
+}
+
+async function frameLoop() {
+    if (!state.cameraRunning || !state.hands) {
+        return;
+    }
+
+    const now = performance.now();
+    const frameInterval = state.performanceProfile?.frameIntervalMs ?? DESKTOP_FRAME_INTERVAL_MS;
+
+    if (!state.processing && videoEl.readyState >= 2 && now - state.lastProcessedAt >= frameInterval) {
         state.processing = true;
+        state.lastProcessedAt = now;
         try {
             await state.hands.send({ image: videoEl });
         } catch (error) {
@@ -693,7 +973,11 @@ async function frameLoop() {
         }
     }
 
-    state.rafId = window.requestAnimationFrame(frameLoop);
+    if (!state.cameraRunning) {
+        return;
+    }
+
+    scheduleNextFrame();
 }
 
 async function startCamera() {
@@ -711,24 +995,36 @@ async function startCamera() {
 
     const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: {
-            facingMode: "user",
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-        }
+        video: state.performanceProfile?.videoConstraints ?? buildPerformanceProfile().videoConstraints
     });
 
     state.stream = stream;
     videoEl.srcObject = stream;
     await videoEl.play();
+
+    if (videoEl.videoWidth && videoEl.videoHeight) {
+        canvasEl.width = videoEl.videoWidth;
+        canvasEl.height = videoEl.videoHeight;
+        if (!state.lockedShape) {
+            freezeCanvasEl.width = videoEl.videoWidth;
+            freezeCanvasEl.height = videoEl.videoHeight;
+        }
+    }
+
     state.cameraRunning = true;
-    setCameraStatus("Camera đang chạy", "is-live");
-    state.rafId = window.requestAnimationFrame(frameLoop);
+    state.lastProcessedAt = 0;
+    toggleLoading(false);
+    updateLiveStatus();
+    if (state.hands) {
+        scheduleNextFrame();
+    }
 }
 
 function stopCamera() {
-    window.cancelAnimationFrame(state.rafId);
-    state.rafId = 0;
+    if (state.rafId) {
+        cancelScheduledFrame();
+    }
+    state.lastProcessedAt = 0;
     state.cameraRunning = false;
     state.processing = false;
 
@@ -739,6 +1035,11 @@ function stopCamera() {
 
     videoEl.pause();
     videoEl.srcObject = null;
+
+    if (!state.lockedShape) {
+        ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+        setFreezeVisible(false);
+    }
 }
 
 function handleCameraError(error) {
@@ -756,7 +1057,23 @@ function exportCanvasAsPng() {
     }
 
     triggerFlash();
-    canvasEl.toBlob((blob) => {
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = canvasEl.width;
+    exportCanvas.height = canvasEl.height;
+    const exportCtx = exportCanvas.getContext("2d");
+
+    if (state.lockedShape && freezeCanvasEl.width && freezeCanvasEl.height) {
+        exportCtx.drawImage(freezeCanvasEl, 0, 0, exportCanvas.width, exportCanvas.height);
+    } else {
+        exportCtx.save();
+        exportCtx.scale(-1, 1);
+        exportCtx.drawImage(videoEl, -exportCanvas.width, 0, exportCanvas.width, exportCanvas.height);
+        exportCtx.restore();
+    }
+
+    exportCtx.drawImage(canvasEl, 0, 0, exportCanvas.width, exportCanvas.height);
+
+    exportCanvas.toBlob((blob) => {
         if (!blob) {
             showToast("Không thể tạo ảnh chụp.");
             return;
@@ -780,6 +1097,11 @@ function handleKeydown(event) {
     }
 
     if (event.code === "Escape") {
+        if (state.guideOpen) {
+            setGuideOpen(false);
+            return;
+        }
+
         clearLock();
     }
 }
@@ -797,12 +1119,7 @@ function initHands() {
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
 
-    state.hands.setOptions({
-        maxNumHands: 2,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.5
-    });
+    state.hands.setOptions(state.performanceProfile?.handsOptions ?? buildPerformanceProfile().handsOptions);
 
     state.hands.onResults(onResults);
 }
@@ -814,8 +1131,15 @@ async function boot() {
 
     state.bootPromise = (async () => {
         try {
-            initHands();
+            syncLayoutMode();
             await startCamera();
+            setCameraStatus("Đang tải engine nhận diện", "is-waiting");
+            await loadHandsLibrary();
+            initHands();
+            if (state.cameraRunning && !state.rafId) {
+                scheduleNextFrame();
+            }
+            updateLiveStatus();
         } catch (error) {
             handleCameraError(error);
         } finally {
@@ -826,17 +1150,40 @@ async function boot() {
     return state.bootPromise;
 }
 
-captureBtn.addEventListener("click", exportCanvasAsPng);
+captureBtn.addEventListener("click", () => {
+    setGuideOpen(false);
+    exportCanvasAsPng();
+});
 clearBtn.addEventListener("click", clearLock);
+guideBtn.addEventListener("click", () => {
+    setGuideOpen(!state.guideOpen);
+});
 retryBtn.addEventListener("click", boot);
 canvasEl.addEventListener("click", () => {
+    if (state.compactLayout && state.guideOpen) {
+        setGuideOpen(false);
+        return;
+    }
+
     if (state.lockedShape) {
         clearLock();
     }
 });
+document.addEventListener("click", (event) => {
+    if (!state.compactLayout || !state.guideOpen) {
+        return;
+    }
+
+    if (guidePanel.contains(event.target) || guideBtn.contains(event.target)) {
+        return;
+    }
+
+    setGuideOpen(false);
+});
 document.addEventListener("keydown", handleKeydown);
 document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
+        setGuideOpen(false);
         stopCamera();
         return;
     }
@@ -845,7 +1192,10 @@ document.addEventListener("visibilitychange", () => {
         boot();
     }
 });
+window.addEventListener("resize", syncLayoutMode);
 window.addEventListener("pagehide", stopCamera);
 window.addEventListener("beforeunload", stopCamera);
 
+syncLayoutMode();
+toggleClearButton();
 boot();
