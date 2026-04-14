@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>3D Glass Effects</title>
+    <meta name="description" content="Trang web camera realtime với hiệu ứng kính 3D theo gesture tay.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./styles.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script defer src="./app.js"></script>
+</head>
+<body>
+    <div class="ambient ambient-a"></div>
+    <div class="ambient ambient-b"></div>
+    <div class="noise-layer"></div>
+
+    <div id="loading" class="screen-state">
+        <div class="screen-card">
+            <div class="spinner" aria-hidden="true"></div>
+            <p class="screen-label">Glass Motion</p>
+            <h1>Đang khởi động camera và engine nhận diện tay</h1>
+            <p class="screen-copy">Cho phép quyền camera để trang có thể dựng hiệu ứng kính 3D theo cử chỉ tay.</p>
+        </div>
+    </div>
+
+    <div id="error-screen" class="screen-state is-hidden" aria-live="polite">
+        <div class="screen-card">
+            <p class="screen-label">Camera Error</p>
+            <h2>Không thể truy cập camera</h2>
+            <p class="screen-copy">Hãy cấp quyền camera trong trình duyệt rồi nhấn thử lại. Trang này cần chạy trên `https` hoặc `localhost`.</p>
+            <button id="retry-btn" class="ghost-button" type="button">Thử lại</button>
+        </div>
+    </div>
+
+    <main class="stage">
+        <video class="input-video" autoplay muted playsinline></video>
+        <canvas class="output-canvas"></canvas>
+        <div id="flash-overlay" class="flash-overlay" aria-hidden="true"></div>
+
+        <div class="ui-layer">
+            <header class="topbar">
+                <div class="brand glass-panel">
+                    <span class="eyebrow">Glass Motion Lab</span>
+                    <strong>3D Glass Effects</strong>
+                    <p>Gesture-controlled AR glass overlay</p>
+                </div>
+
+                <div class="status-cluster">
+                    <div id="camera-status" class="glass-chip is-waiting">Đang chuẩn bị camera</div>
+                    <div id="gesture-tag" class="glass-chip is-soft is-hidden">Không phát hiện gesture</div>
+                </div>
+            </header>
+
+            <aside class="action-rail">
+                <button id="capture-btn" class="action-button capture-button" type="button" aria-label="Chụp ảnh">
+                    <span class="action-icon"></span>
+                    <span class="action-text">Chụp PNG</span>
+                </button>
+                <button id="clear-btn" class="action-button secondary-button is-hidden" type="button" aria-label="Xóa khung khóa">
+                    <span class="secondary-icon">✕</span>
+                    <span class="action-text">Xóa khóa</span>
+                </button>
+            </aside>
+
+            <section class="instruction-strip" aria-label="Các gesture hỗ trợ">
+                <article class="gesture-card glass-panel">
+                    <span class="gesture-mark">▲</span>
+                    <div>
+                        <strong>Tam giác</strong>
+                        <p>Cái + trỏ + giữa để tạo lăng kính tam giác.</p>
+                    </div>
+                </article>
+                <article class="gesture-card glass-panel">
+                    <span class="gesture-mark">✦</span>
+                    <div>
+                        <strong>Ngôi sao</strong>
+                        <p>Dấu peace một tay để mở kính ngôi sao.</p>
+                    </div>
+                </article>
+                <article class="gesture-card glass-panel">
+                    <span class="gesture-mark">▱</span>
+                    <div>
+                        <strong>Tứ giác 3D</strong>
+                        <p>Hai tay kiểu L-Frame để dựng khung kính nghiêng.</p>
+                    </div>
+                </article>
+                <article class="gesture-card glass-panel">
+                    <span class="gesture-mark">◌</span>
+                    <div>
+                        <strong>Ellipse kéo dãn</strong>
+                        <p>Hai tay cái + trỏ + út để tạo vòng kính co giãn.</p>
+                    </div>
+                </article>
+            </section>
+
+            <footer class="footer-hud glass-panel">
+                <div class="footer-copy">
+                    <strong>Giữ gesture ổn định khoảng 0.9 giây để khóa khung kính.</strong>
+                    <p>Nhấn vào canvas, `Esc` để xóa khung khóa, `Space` để chụp và lưu ảnh PNG.</p>
+                </div>
+                <div class="footer-tags">
+                    <span class="mini-tag">Realtime Hand Tracking</span>
+                    <span class="mini-tag">3D Frosted Glass</span>
+                    <span class="mini-tag">Mobile Friendly</span>
+                </div>
+            </footer>
+        </div>
+    </main>
+
+    <div id="toast" class="toast is-hidden" aria-live="polite"></div>
+</body>
+</html>
