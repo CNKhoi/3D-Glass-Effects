@@ -35,6 +35,124 @@
         </div>
     </div>
 
+    <button id="menu-btn" type="button" aria-label="Mở menu chế độ">
+        <span></span>
+        <span></span>
+        <span></span>
+    </button>
+
+    <div id="mode-menu" aria-hidden="true">
+        <div class="menu-title">Danh sách chế độ</div>
+        <button class="menu-item" id="history-mode-btn" type="button">
+            <strong>Lịch sử ảnh</strong>
+            <small>Xem, tải xuống và chọn nhiều ảnh để ghép.</small>
+        </button>
+        <button class="menu-item" id="photobook-mode-btn" type="button">
+            <strong>Khung ảnh Photobook</strong>
+            <small>Mở ghi chú nghiên cứu cho luồng chụp nhiều tấm.</small>
+        </button>
+    </div>
+
+    <div id="overlay-backdrop" aria-hidden="true"></div>
+
+    <aside id="history-drawer" aria-hidden="true">
+        <div class="drawer-header">
+            <div>
+                <h3>Lịch sử ảnh chụp</h3>
+                <p>Ảnh mới lưu sẽ xuất hiện ở đây. Chọn tối đa 4 ảnh để mở editor ghép.</p>
+            </div>
+            <button class="drawer-close" id="history-close-btn" type="button" aria-label="Đóng lịch sử">✕</button>
+        </div>
+        <div class="drawer-content">
+            <div id="history-empty">Chưa có ảnh nào trong lịch sử. Hãy chụp một tấm ảnh trước, ảnh sẽ tự xuất hiện ở đây.</div>
+            <div id="history-preview">
+                <img id="history-preview-image" alt="Ảnh lịch sử đã chọn">
+                <div class="history-preview-meta">
+                    <strong id="history-preview-title">Ảnh gần đây</strong>
+                    <span id="history-preview-time"></span>
+                    <div id="history-selection-count" class="history-selection-count"></div>
+                    <div class="history-actions">
+                        <button class="history-action primary" id="history-download-btn" type="button">Tải xuống</button>
+                        <button class="history-action secondary" id="history-edit-btn" type="button">Mở chỉnh sửa</button>
+                        <button class="history-action secondary" id="history-clear-selection-btn" type="button">Bỏ chọn ảnh ghép</button>
+                    </div>
+                    <div class="history-note">Bấm vào thumbnail để xem ảnh. Bấm nút dấu cộng hoặc dấu tích trên từng ô để chọn tối đa 4 ảnh ghép trước khi mở editor.</div>
+                </div>
+            </div>
+            <div id="history-list"></div>
+        </div>
+    </aside>
+
+    <div id="research-modal" aria-hidden="true">
+        <div class="research-card">
+            <h3>Khung ảnh Photobook</h3>
+            <p>Chế độ này đang ở giai đoạn nghiên cứu. Ở bước tiếp theo có thể nối thêm thư mục khung PNG và luồng chụp nhiều tấm để dựng photobook giống site mẫu.</p>
+            <button id="research-close-btn" type="button">Đóng</button>
+        </div>
+    </div>
+
+    <section id="editor-overlay" aria-hidden="true">
+        <div class="editor-shell">
+            <div class="editor-topbar">
+                <div>
+                    <h3>Photo Editor</h3>
+                    <p>Ghép ảnh, chọn khung, thêm sticker và tải PNG.</p>
+                </div>
+                <div class="editor-top-actions">
+                    <button id="editor-download-btn" type="button">Lưu ảnh</button>
+                    <button id="editor-close-btn" type="button" aria-label="Đóng màn hình chỉnh sửa">✕</button>
+                </div>
+            </div>
+            <div class="editor-body">
+                <div class="editor-stage-wrap">
+                    <canvas id="editor-canvas" width="1080" height="1350"></canvas>
+                </div>
+                <div class="editor-panel">
+                    <div class="editor-section">
+                        <h4>Bố cục ảnh</h4>
+                        <div id="editor-layout-options" class="editor-option-row"></div>
+                        <div class="editor-helper">Chọn tối đa 4 ảnh từ lịch sử, sau đó đổi bố cục ngang, dọc hoặc lưới.</div>
+                        <div id="editor-photo-picker" class="editor-photo-picker"></div>
+                    </div>
+
+                    <div class="editor-section">
+                        <h4>Khung ảnh</h4>
+                        <div id="editor-frame-options" class="editor-option-row"></div>
+                    </div>
+
+                    <div class="editor-section">
+                        <h4>Sticker</h4>
+                        <input id="sticker-search-input" class="editor-search" type="search" placeholder="Tìm sticker theo tên...">
+                        <div id="sticker-list" class="sticker-grid"></div>
+                    </div>
+
+                    <div class="editor-section">
+                        <h4>Sticker đang chọn</h4>
+                        <label class="editor-control">
+                            <span class="editor-control-head"><strong>Zoom</strong><span>Tăng hoặc giảm kích thước sticker.</span></span>
+                            <input id="sticker-scale-range" type="range" min="40" max="220" step="1" value="100">
+                        </label>
+                        <label class="editor-control">
+                            <span class="editor-control-head"><strong>Xoay</strong><span>Điều chỉnh góc xoay sticker.</span></span>
+                            <input id="sticker-rotation-range" type="range" min="-180" max="180" step="1" value="0">
+                        </label>
+                        <label class="editor-control">
+                            <span class="editor-control-head"><strong>Gôm</strong><strong id="sticker-eraser-size-value" class="editor-inline-value">24 px</strong></span>
+                            <input id="sticker-eraser-range" type="range" min="8" max="72" step="1" value="24">
+                        </label>
+                        <div class="editor-action-row compact">
+                            <button id="sticker-eraser-toggle-btn" class="editor-action-btn" type="button">Bật gôm</button>
+                            <button id="sticker-flip-x-btn" class="editor-action-btn" type="button">Lật ngang</button>
+                            <button id="sticker-flip-y-btn" class="editor-action-btn" type="button">Lật dọc</button>
+                            <button id="sticker-remove-btn" class="editor-action-btn danger" type="button">Xóa</button>
+                        </div>
+                        <div id="editor-selection-note" class="editor-empty">Chọn một sticker trong thư viện rồi kéo trực tiếp trên khung. Có thể dùng con lăn chuột để zoom nhanh sticker đang chọn.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <main class="stage">
         <video class="input-video" autoplay muted playsinline></video>
         <canvas class="freeze-canvas" aria-hidden="true"></canvas>
@@ -64,11 +182,30 @@
                     <span class="action-icon"></span>
                     <span class="action-text">Chụp PNG</span>
                 </button>
+                <button id="capture-delay-btn" class="action-button secondary-button" type="button" aria-label="Hẹn giờ chụp" aria-haspopup="true" aria-expanded="false">
+                    <span class="secondary-icon">⏱</span>
+                    <span class="action-text">Hẹn giờ</span>
+                    <span id="capture-delay-value" class="delay-badge">0s</span>
+                </button>
                 <button id="clear-btn" class="action-button secondary-button is-hidden" type="button" aria-label="Xóa khung khóa">
                     <span class="secondary-icon">✕</span>
                     <span class="action-text">Xóa khóa</span>
                 </button>
             </aside>
+
+            <div id="capture-delay-menu" aria-hidden="true">
+                <button class="capture-delay-option active" type="button" data-capture-delay="0">Ngay</button>
+                <button class="capture-delay-option" type="button" data-capture-delay="3">3 giây</button>
+                <button class="capture-delay-option" type="button" data-capture-delay="5">5 giây</button>
+                <button class="capture-delay-option" type="button" data-capture-delay="10">10 giây</button>
+            </div>
+
+            <div id="capture-countdown" aria-live="assertive" aria-atomic="true">
+                <strong id="capture-countdown-value">3</strong>
+                <small id="capture-countdown-label">Chuẩn bị chụp</small>
+            </div>
+
+            <div id="clear-hint">Nhấn màn hình để xóa<br>Nút camera để chụp và lưu<br>Nút đồng hồ để hẹn giờ 3s / 5s / 10s</div>
 
             <section id="guide-panel" class="guide-panel" aria-label="Hướng dẫn sử dụng">
                 <section class="instruction-strip" aria-label="Các gesture hỗ trợ">
@@ -84,6 +221,13 @@
                         <div>
                             <strong>Ngôi sao</strong>
                             <p>Dấu peace một tay để mở kính ngôi sao.</p>
+                        </div>
+                    </article>
+                    <article class="gesture-card glass-panel">
+                        <span class="gesture-mark">◯</span>
+                        <div>
+                            <strong>Open palm</strong>
+                            <p>Bàn tay mở một tay để tạo vòng tròn lớn.</p>
                         </div>
                     </article>
                     <article class="gesture-card glass-panel">
@@ -118,5 +262,6 @@
     </main>
 
     <div id="toast" class="toast is-hidden" aria-live="polite"></div>
+    <canvas id="editor-export-canvas" width="1080" height="1350" hidden aria-hidden="true"></canvas>
 </body>
 </html>

@@ -34,6 +34,69 @@ const cameraStatusEl = document.getElementById("camera-status");
 const gestureTagEl = document.getElementById("gesture-tag");
 const toastEl = document.getElementById("toast");
 const flashOverlayEl = document.getElementById("flash-overlay");
+const menuBtnEl = document.getElementById("menu-btn");
+const modeMenuEl = document.getElementById("mode-menu");
+const historyModeBtnEl = document.getElementById("history-mode-btn");
+const photobookModeBtnEl = document.getElementById("photobook-mode-btn");
+const overlayBackdropEl = document.getElementById("overlay-backdrop");
+const captureDelayBtnEl = document.getElementById("capture-delay-btn");
+const captureDelayValueEl = document.getElementById("capture-delay-value");
+const captureDelayMenuEl = document.getElementById("capture-delay-menu");
+const captureCountdownEl = document.getElementById("capture-countdown");
+const captureCountdownValueEl = document.getElementById("capture-countdown-value");
+const captureCountdownLabelEl = document.getElementById("capture-countdown-label");
+const historyDrawerEl = document.getElementById("history-drawer");
+const historyCloseBtnEl = document.getElementById("history-close-btn");
+const historyEmptyEl = document.getElementById("history-empty");
+const historyPreviewEl = document.getElementById("history-preview");
+const historyPreviewImageEl = document.getElementById("history-preview-image");
+const historyPreviewTitleEl = document.getElementById("history-preview-title");
+const historyPreviewTimeEl = document.getElementById("history-preview-time");
+const historySelectionCountEl = document.getElementById("history-selection-count");
+const historyDownloadBtnEl = document.getElementById("history-download-btn");
+const historyEditBtnEl = document.getElementById("history-edit-btn");
+const historyClearSelectionBtnEl = document.getElementById("history-clear-selection-btn");
+const historyListEl = document.getElementById("history-list");
+const researchModalEl = document.getElementById("research-modal");
+const researchCloseBtnEl = document.getElementById("research-close-btn");
+const editorOverlayEl = document.getElementById("editor-overlay");
+const editorCanvasEl = document.getElementById("editor-canvas");
+const editorCtx = editorCanvasEl.getContext("2d", { alpha: true, desynchronized: true });
+const editorLayoutOptionsEl = document.getElementById("editor-layout-options");
+const editorPhotoPickerEl = document.getElementById("editor-photo-picker");
+const editorFrameOptionsEl = document.getElementById("editor-frame-options");
+const stickerSearchInputEl = document.getElementById("sticker-search-input");
+const stickerListEl = document.getElementById("sticker-list");
+const stickerScaleRangeEl = document.getElementById("sticker-scale-range");
+const stickerRotationRangeEl = document.getElementById("sticker-rotation-range");
+const stickerEraserSizeValueEl = document.getElementById("sticker-eraser-size-value");
+const stickerEraserRangeEl = document.getElementById("sticker-eraser-range");
+const stickerEraserToggleBtnEl = document.getElementById("sticker-eraser-toggle-btn");
+const stickerFlipXBtnEl = document.getElementById("sticker-flip-x-btn");
+const stickerFlipYBtnEl = document.getElementById("sticker-flip-y-btn");
+const stickerRemoveBtnEl = document.getElementById("sticker-remove-btn");
+const editorSelectionNoteEl = document.getElementById("editor-selection-note");
+const editorDownloadBtnEl = document.getElementById("editor-download-btn");
+const editorCloseBtnEl = document.getElementById("editor-close-btn");
+const editorExportCanvasEl = document.getElementById("editor-export-canvas");
+const editorExportCtx = editorExportCanvasEl.getContext("2d", { alpha: true });
+
+const MAX_CAPTURE_HISTORY = 10;
+const COLLAGE_LAYOUTS = [
+    { id: "single", label: "1 ảnh", hint: "Toàn khung" },
+    { id: "split-v", label: "Ngang 2", hint: "Trái / phải" },
+    { id: "split-h", label: "Dọc 2", hint: "Trên / dưới" },
+    { id: "grid", label: "Lưới 4", hint: "Ghép nhiều ảnh" }
+];
+const FRAME_STYLES = [
+    { id: "none", label: "Tối giản", hint: "Không viền" },
+    { id: "classic", label: "Classic", hint: "Khung trắng" },
+    { id: "polaroid", label: "Polaroid", hint: "Mé dưới dày" },
+    { id: "neon", label: "Neon", hint: "Phát sáng" },
+    { id: "film", label: "Film", hint: "Dải phim" }
+];
+const STICKER_LIBRARY = buildStickerLibrary();
+const imageCache = new Map();
 
 const state = {
     hands: null,
@@ -59,6 +122,36 @@ const state = {
     compactLayout: false,
     progress: 0,
     toastTimer: 0
+};
+
+let capturedPhotos = [];
+let selectedHistoryPhotoId = "";
+let selectedHistoryPhotoIds = [];
+let selectedCaptureDelay = 0;
+let captureCountdownTimeout = 0;
+let captureCountdownInterval = 0;
+let captureCountdownEndsAt = 0;
+let captureCountdownLastValue = 0;
+
+const editorState = {
+    isOpen: false,
+    selectedPhotoIds: [],
+    collageLayout: "single",
+    frameStyle: "classic",
+    activeStickers: [],
+    selectedStickerId: null,
+    stickerSearch: "",
+    dragStickerId: null,
+    dragOffsetX: 0,
+    dragOffsetY: 0,
+    eraserEnabled: false,
+    eraserRadius: 24,
+    erasingStickerId: null,
+    eraseLastPoint: null,
+    eraserCursorVisible: false,
+    eraserCursorX: 0,
+    eraserCursorY: 0,
+    renderToken: 0
 };
 
 function isLowPowerDevice() {
@@ -827,11 +920,11 @@ function clearLock() {
 function copyCurrentFrameToFrozen(width, height) {
     freezeCanvasEl.width = width;
     freezeCanvasEl.height = height;
-    frozenCtx.clearRect(0, 0, width, height);
-    frozenCtx.save();
-    frozenCtx.scale(-1, 1);
-    frozenCtx.drawImage(videoEl, -width, 0, width, height);
-    frozenCtx.restore();
+    freezeCtx.clearRect(0, 0, width, height);
+    freezeCtx.save();
+    freezeCtx.scale(-1, 1);
+    freezeCtx.drawImage(videoEl, -width, 0, width, height);
+    freezeCtx.restore();
     setFreezeVisible(true);
 }
 
@@ -1199,3 +1292,1500 @@ window.addEventListener("beforeunload", stopCamera);
 syncLayoutMode();
 toggleClearButton();
 boot();
+
+function createStickerDataUrl({ emoji, start, end, accent = "#ffffff" }) {
+    const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+            <defs>
+                <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stop-color="${start}"/>
+                    <stop offset="100%" stop-color="${end}"/>
+                </linearGradient>
+            </defs>
+            <rect x="24" y="24" width="208" height="208" rx="54" fill="url(#g)"/>
+            <rect x="36" y="36" width="184" height="184" rx="44" fill="rgba(255,255,255,0.14)" stroke="rgba(255,255,255,0.24)" stroke-width="4"/>
+            <circle cx="128" cy="128" r="86" fill="rgba(255,255,255,0.08)"/>
+            <text x="128" y="146" text-anchor="middle" font-size="96" font-family="Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, sans-serif" fill="${accent}">${emoji}</text>
+        </svg>
+    `.trim();
+
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+function buildStickerLibrary() {
+    const presets = [
+        { id: "sticker-glasses", name: "3d-glasses", label: "3D Glasses", emoji: "😎", start: "#38bdf8", end: "#6366f1" },
+        { id: "sticker-heart", name: "heart", label: "Heart", emoji: "❤️", start: "#fb7185", end: "#f97316" },
+        { id: "sticker-star", name: "star", label: "Star", emoji: "⭐", start: "#facc15", end: "#f59e0b" },
+        { id: "sticker-fire", name: "fire", label: "Fire", emoji: "🔥", start: "#fb7185", end: "#f97316" },
+        { id: "sticker-rainbow", name: "rainbow", label: "Rainbow", emoji: "🌈", start: "#60a5fa", end: "#f472b6" },
+        { id: "sticker-crown", name: "crown", label: "Crown", emoji: "👑", start: "#facc15", end: "#fb7185" },
+        { id: "sticker-sparkles", name: "sparkles", label: "Sparkles", emoji: "✨", start: "#22d3ee", end: "#a78bfa" },
+        { id: "sticker-camera", name: "camera", label: "Camera", emoji: "📸", start: "#34d399", end: "#10b981" },
+        { id: "sticker-smile", name: "smile", label: "Smile", emoji: "😊", start: "#f9a8d4", end: "#c084fc" },
+        { id: "sticker-speech", name: "speech", label: "Speech", emoji: "💬", start: "#93c5fd", end: "#38bdf8" },
+        { id: "sticker-sun", name: "sun", label: "Sun", emoji: "☀️", start: "#fbbf24", end: "#fb7185" },
+        { id: "sticker-party", name: "party", label: "Party", emoji: "🥳", start: "#22c55e", end: "#3b82f6" }
+    ];
+
+    return presets.map((preset) => ({
+        id: preset.id,
+        name: preset.name,
+        label: preset.label,
+        src: createStickerDataUrl(preset)
+    }));
+}
+
+function formatCaptureTime(timestamp) {
+    return new Intl.DateTimeFormat("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        day: "2-digit",
+        month: "2-digit"
+    }).format(timestamp);
+}
+
+function downloadDataUrl(dataUrl, filename) {
+    const link = document.createElement("a");
+    link.href = dataUrl;
+    link.download = filename;
+    link.click();
+}
+
+function getSelectedHistoryPhoto() {
+    return capturedPhotos.find((photo) => photo.id === selectedHistoryPhotoId) ?? null;
+}
+
+function getHistorySelectedPhotos() {
+    return selectedHistoryPhotoIds
+        .map((photoId) => capturedPhotos.find((photo) => photo.id === photoId))
+        .filter(Boolean);
+}
+
+function getHistoryPhotosForEditor() {
+    const selectedPhotos = getHistorySelectedPhotos();
+    if (selectedPhotos.length) {
+        return selectedPhotos;
+    }
+
+    const focusedPhoto = getSelectedHistoryPhoto();
+    return focusedPhoto ? [focusedPhoto] : [];
+}
+
+function updateOverlayBackdrop() {
+    const visible = modeMenuEl.classList.contains("visible") ||
+        historyDrawerEl.classList.contains("visible") ||
+        researchModalEl.classList.contains("visible");
+    overlayBackdropEl.classList.toggle("visible", visible);
+    overlayBackdropEl.setAttribute("aria-hidden", String(!visible));
+}
+
+function toggleModeMenu(force) {
+    const shouldOpen = typeof force === "boolean"
+        ? force
+        : !modeMenuEl.classList.contains("visible");
+
+    modeMenuEl.classList.toggle("visible", shouldOpen);
+    modeMenuEl.setAttribute("aria-hidden", String(!shouldOpen));
+    menuBtnEl.setAttribute("aria-expanded", String(shouldOpen));
+    updateOverlayBackdrop();
+}
+
+function renderCaptureDelayOptions() {
+    captureDelayValueEl.textContent = `${selectedCaptureDelay}s`;
+    captureDelayMenuEl.querySelectorAll("[data-capture-delay]").forEach((button) => {
+        const isActive = Number(button.dataset.captureDelay) === selectedCaptureDelay;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-pressed", String(isActive));
+    });
+}
+
+function toggleCaptureDelayMenu(force) {
+    const shouldOpen = typeof force === "boolean"
+        ? force
+        : !captureDelayMenuEl.classList.contains("visible");
+
+    captureDelayMenuEl.classList.toggle("visible", shouldOpen);
+    captureDelayMenuEl.setAttribute("aria-hidden", String(!shouldOpen));
+    captureDelayBtnEl.setAttribute("aria-expanded", String(shouldOpen));
+}
+
+function renderCaptureCountdownValue() {
+    if (!captureCountdownEndsAt) {
+        return;
+    }
+
+    const remainingMs = Math.max(0, captureCountdownEndsAt - Date.now());
+    const nextValue = Math.max(1, Math.ceil(remainingMs / 1000));
+    if (nextValue === captureCountdownLastValue) {
+        return;
+    }
+
+    captureCountdownLastValue = nextValue;
+    captureCountdownValueEl.textContent = String(nextValue);
+}
+
+function stopCaptureCountdown(options = {}) {
+    const { notifyCancel = false } = options;
+    const hadCountdown = Boolean(captureCountdownEndsAt);
+
+    window.clearTimeout(captureCountdownTimeout);
+    window.clearInterval(captureCountdownInterval);
+    captureCountdownTimeout = 0;
+    captureCountdownInterval = 0;
+    captureCountdownEndsAt = 0;
+    captureCountdownLastValue = 0;
+    captureCountdownEl.classList.remove("visible");
+    captureBtn.classList.remove("countdown-active");
+    captureDelayBtnEl.classList.remove("countdown-active");
+
+    if (notifyCancel && hadCountdown) {
+        showToast("Đã hủy hẹn giờ.", 1600);
+    }
+}
+
+function composeCurrentFrame(targetCanvas) {
+    if (!canvasEl.width || !canvasEl.height || (!state.cameraRunning && !state.lockedShape)) {
+        return null;
+    }
+
+    targetCanvas.width = canvasEl.width;
+    targetCanvas.height = canvasEl.height;
+    const targetCtx = targetCanvas.getContext("2d", { alpha: false });
+    targetCtx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+
+    if (state.lockedShape && freezeCanvasEl.width && freezeCanvasEl.height) {
+        targetCtx.drawImage(freezeCanvasEl, 0, 0, targetCanvas.width, targetCanvas.height);
+    } else {
+        targetCtx.save();
+        targetCtx.scale(-1, 1);
+        targetCtx.drawImage(videoEl, -targetCanvas.width, 0, targetCanvas.width, targetCanvas.height);
+        targetCtx.restore();
+    }
+
+    targetCtx.drawImage(canvasEl, 0, 0, targetCanvas.width, targetCanvas.height);
+    return targetCanvas;
+}
+
+function pushCapturedPhoto(dataUrl, options = {}) {
+    const { labelPrefix = "Ảnh" } = options;
+    const entry = {
+        id: `photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        dataUrl,
+        createdAt: Date.now(),
+        label: `${labelPrefix} ${capturedPhotos.length + 1}`
+    };
+
+    capturedPhotos.unshift(entry);
+    if (capturedPhotos.length > MAX_CAPTURE_HISTORY) {
+        capturedPhotos = capturedPhotos.slice(0, MAX_CAPTURE_HISTORY);
+    }
+
+    selectedHistoryPhotoId = entry.id;
+    selectedHistoryPhotoIds = [entry.id];
+    renderHistoryDrawer();
+}
+
+function saveCurrentFrame() {
+    if (!canvasEl.width || !canvasEl.height) {
+        showToast("Camera chưa sẵn sàng để chụp.", 1800);
+        return;
+    }
+
+    stopCaptureCountdown();
+    triggerFlash();
+
+    const snapshotCanvas = composeCurrentFrame(document.createElement("canvas"));
+    if (!snapshotCanvas) {
+        showToast("Không thể tạo ảnh chụp.", 1800);
+        return;
+    }
+
+    const dataUrl = snapshotCanvas.toDataURL("image/png");
+    pushCapturedPhoto(dataUrl);
+    downloadDataUrl(dataUrl, `glass-effects-${Date.now()}.png`);
+    if (navigator.vibrate) {
+        navigator.vibrate(30);
+    }
+    showToast("✓ Đã lưu ảnh!", 2200);
+}
+
+function startCaptureFlow() {
+    setGuideOpen(false);
+    toggleModeMenu(false);
+    toggleCaptureDelayMenu(false);
+
+    if (captureCountdownEndsAt) {
+        stopCaptureCountdown({ notifyCancel: true });
+        return;
+    }
+
+    if (!selectedCaptureDelay) {
+        saveCurrentFrame();
+        return;
+    }
+
+    captureCountdownEndsAt = Date.now() + selectedCaptureDelay * 1000;
+    captureCountdownLabelEl.textContent = "Chuẩn bị chụp";
+    captureCountdownEl.classList.add("visible");
+    captureBtn.classList.add("countdown-active");
+    captureDelayBtnEl.classList.add("countdown-active");
+    renderCaptureCountdownValue();
+
+    captureCountdownInterval = window.setInterval(renderCaptureCountdownValue, 120);
+    captureCountdownTimeout = window.setTimeout(() => {
+        stopCaptureCountdown();
+        saveCurrentFrame();
+    }, selectedCaptureDelay * 1000);
+}
+
+function openHistoryDrawer() {
+    toggleModeMenu(false);
+    closeResearchModal();
+    setGuideOpen(false);
+    historyDrawerEl.classList.add("visible");
+    historyDrawerEl.setAttribute("aria-hidden", "false");
+    renderHistoryDrawer();
+    updateOverlayBackdrop();
+}
+
+function closeHistoryDrawer() {
+    historyDrawerEl.classList.remove("visible");
+    historyDrawerEl.setAttribute("aria-hidden", "true");
+    updateOverlayBackdrop();
+}
+
+function openResearchModal() {
+    toggleModeMenu(false);
+    closeHistoryDrawer();
+    setGuideOpen(false);
+    researchModalEl.classList.add("visible");
+    researchModalEl.setAttribute("aria-hidden", "false");
+    updateOverlayBackdrop();
+}
+
+function closeResearchModal() {
+    researchModalEl.classList.remove("visible");
+    researchModalEl.setAttribute("aria-hidden", "true");
+    updateOverlayBackdrop();
+}
+
+function clearHistoryPhotoSelection() {
+    selectedHistoryPhotoIds = [];
+    renderHistoryDrawer();
+}
+
+function toggleHistoryPhotoSelection(photoId) {
+    if (!photoId) {
+        return;
+    }
+
+    const exists = selectedHistoryPhotoIds.includes(photoId);
+    if (exists) {
+        selectedHistoryPhotoIds = selectedHistoryPhotoIds.filter((id) => id !== photoId);
+    } else {
+        if (selectedHistoryPhotoIds.length >= 4) {
+            showToast("Chỉ chọn tối đa 4 ảnh để ghép.", 2200);
+            return;
+        }
+
+        selectedHistoryPhotoIds = [...selectedHistoryPhotoIds, photoId];
+    }
+
+    selectedHistoryPhotoId = photoId;
+    renderHistoryDrawer();
+}
+
+function renderHistoryDrawer() {
+    const hasPhotos = capturedPhotos.length > 0;
+    historyEmptyEl.style.display = hasPhotos ? "none" : "block";
+    historyListEl.innerHTML = "";
+
+    if (!hasPhotos) {
+        selectedHistoryPhotoId = "";
+        selectedHistoryPhotoIds = [];
+        historyPreviewEl.classList.remove("visible");
+        historyPreviewImageEl.removeAttribute("src");
+        historySelectionCountEl.textContent = "";
+        historyDownloadBtnEl.disabled = true;
+        historyEditBtnEl.disabled = true;
+        historyClearSelectionBtnEl.disabled = true;
+        return;
+    }
+
+    if (!getSelectedHistoryPhoto()) {
+        selectedHistoryPhotoId = capturedPhotos[0].id;
+    }
+
+    selectedHistoryPhotoIds = selectedHistoryPhotoIds
+        .filter((photoId) => capturedPhotos.some((photo) => photo.id === photoId))
+        .slice(0, 4);
+
+    for (const photo of capturedPhotos) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = `history-item${photo.id === selectedHistoryPhotoId ? " focused" : ""}${selectedHistoryPhotoIds.includes(photo.id) ? " selected" : ""}`;
+        item.dataset.photoId = photo.id;
+        item.innerHTML = `
+            <span class="history-item-toggle" data-toggle-photo-id="${photo.id}" aria-label="${selectedHistoryPhotoIds.includes(photo.id) ? "Bỏ chọn ảnh" : "Chọn ảnh để ghép"}">${selectedHistoryPhotoIds.includes(photo.id) ? "✓" : "+"}</span>
+            <img src="${photo.dataUrl}" alt="${photo.label}">
+            <div class="history-item-meta">
+                <strong>${photo.label}</strong>
+                <span>${formatCaptureTime(photo.createdAt)}</span>
+            </div>
+        `;
+        historyListEl.appendChild(item);
+    }
+
+    const selectedPhoto = getSelectedHistoryPhoto();
+    historyPreviewEl.classList.toggle("visible", Boolean(selectedPhoto));
+    if (!selectedPhoto) {
+        historyDownloadBtnEl.disabled = true;
+        historyEditBtnEl.disabled = true;
+        historyClearSelectionBtnEl.disabled = true;
+        return;
+    }
+
+    historyPreviewImageEl.src = selectedPhoto.dataUrl;
+    historyPreviewTitleEl.textContent = selectedPhoto.label;
+    historyPreviewTimeEl.textContent = `Đã lưu lúc ${formatCaptureTime(selectedPhoto.createdAt)}`;
+    historySelectionCountEl.textContent = selectedHistoryPhotoIds.length
+        ? `Đã chọn ${selectedHistoryPhotoIds.length}/4 ảnh để ghép trong editor.`
+        : "Chưa chọn ảnh ghép. Nếu mở editor ngay, hệ thống sẽ dùng ảnh đang xem.";
+
+    const editorPhotos = getHistoryPhotosForEditor();
+    historyDownloadBtnEl.disabled = false;
+    historyEditBtnEl.disabled = editorPhotos.length === 0;
+    historyEditBtnEl.textContent = editorPhotos.length > 1
+        ? `Mở chỉnh sửa (${editorPhotos.length} ảnh)`
+        : "Mở chỉnh sửa";
+    historyClearSelectionBtnEl.disabled = selectedHistoryPhotoIds.length === 0;
+}
+
+function loadImageCached(src) {
+    if (imageCache.has(src)) {
+        return imageCache.get(src);
+    }
+
+    const imagePromise = new Promise((resolve, reject) => {
+        const image = new Image();
+        image.decoding = "async";
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error(`Không thể tải ảnh: ${src}`));
+        image.src = src;
+    });
+
+    imageCache.set(src, imagePromise);
+    return imagePromise;
+}
+
+function getEditorSelectedPhotos() {
+    return editorState.selectedPhotoIds
+        .map((photoId) => capturedPhotos.find((photo) => photo.id === photoId))
+        .filter(Boolean);
+}
+
+function getEditorSelectedSticker() {
+    return editorState.activeStickers.find((sticker) => sticker.id === editorState.selectedStickerId) ?? null;
+}
+
+function createStickerRenderSurface(image, width, height) {
+    const renderCanvas = document.createElement("canvas");
+    renderCanvas.width = Math.max(1, Math.round(width));
+    renderCanvas.height = Math.max(1, Math.round(height));
+    const renderCtx = renderCanvas.getContext("2d", { willReadFrequently: true });
+    renderCtx.clearRect(0, 0, renderCanvas.width, renderCanvas.height);
+    renderCtx.drawImage(image, 0, 0, renderCanvas.width, renderCanvas.height);
+    return { renderCanvas, renderCtx };
+}
+
+function getStickerCanvasCoordinates(sticker, stageX, stageY) {
+    const dx = stageX - sticker.x;
+    const dy = stageY - sticker.y;
+    const cos = Math.cos(-sticker.rotation);
+    const sin = Math.sin(-sticker.rotation);
+    const rotatedX = dx * cos - dy * sin;
+    const rotatedY = dx * sin + dy * cos;
+    const scaledX = rotatedX / (sticker.scale * sticker.flipX);
+    const scaledY = rotatedY / (sticker.scale * sticker.flipY);
+    const canvasX = scaledX + sticker.width / 2;
+    const canvasY = scaledY + sticker.height / 2;
+
+    return {
+        canvasX,
+        canvasY,
+        inside: canvasX >= 0 && canvasX <= sticker.width && canvasY >= 0 && canvasY <= sticker.height
+    };
+}
+
+function isStickerPixelVisible(sticker, canvasX, canvasY) {
+    if (!sticker.renderCtx || !sticker.renderCanvas) {
+        return true;
+    }
+
+    const px = clamp(Math.floor(canvasX), 0, sticker.renderCanvas.width - 1);
+    const py = clamp(Math.floor(canvasY), 0, sticker.renderCanvas.height - 1);
+    return sticker.renderCtx.getImageData(px, py, 1, 1).data[3] > 8;
+}
+
+function getEditorCanvasPoint(event) {
+    const rect = editorCanvasEl.getBoundingClientRect();
+    return {
+        x: (event.clientX - rect.left) * (editorCanvasEl.width / rect.width),
+        y: (event.clientY - rect.top) * (editorCanvasEl.height / rect.height)
+    };
+}
+
+function findStickerAtPoint(x, y) {
+    for (let index = editorState.activeStickers.length - 1; index >= 0; index -= 1) {
+        const sticker = editorState.activeStickers[index];
+        const localPoint = getStickerCanvasCoordinates(sticker, x, y);
+        if (!localPoint.inside) {
+            continue;
+        }
+        if (!isStickerPixelVisible(sticker, localPoint.canvasX, localPoint.canvasY)) {
+            continue;
+        }
+        return sticker;
+    }
+
+    return null;
+}
+
+function eraseStickerStroke(sticker, fromPoint, toPoint) {
+    if (!sticker?.renderCtx) {
+        return;
+    }
+
+    const from = getStickerCanvasCoordinates(sticker, fromPoint.x, fromPoint.y);
+    const to = getStickerCanvasCoordinates(sticker, toPoint.x, toPoint.y);
+    const brushRadius = editorState.eraserRadius / Math.max(0.01, sticker.scale);
+
+    sticker.renderCtx.save();
+    sticker.renderCtx.globalCompositeOperation = "destination-out";
+    sticker.renderCtx.lineCap = "round";
+    sticker.renderCtx.lineJoin = "round";
+    sticker.renderCtx.lineWidth = brushRadius * 2;
+    sticker.renderCtx.beginPath();
+    sticker.renderCtx.moveTo(from.canvasX, from.canvasY);
+    sticker.renderCtx.lineTo(to.canvasX, to.canvasY);
+    sticker.renderCtx.stroke();
+    sticker.renderCtx.beginPath();
+    sticker.renderCtx.arc(to.canvasX, to.canvasY, brushRadius, 0, TAU);
+    sticker.renderCtx.fill();
+    sticker.renderCtx.restore();
+}
+
+function updateEraserCursor(point) {
+    if (!editorState.eraserEnabled || !point) {
+        editorState.eraserCursorVisible = false;
+        return;
+    }
+
+    editorState.eraserCursorVisible = true;
+    editorState.eraserCursorX = point.x;
+    editorState.eraserCursorY = point.y;
+}
+
+function drawEraserCursor(targetCtx) {
+    if (!editorState.eraserEnabled || !editorState.eraserCursorVisible) {
+        return;
+    }
+
+    targetCtx.save();
+    targetCtx.beginPath();
+    targetCtx.arc(editorState.eraserCursorX, editorState.eraserCursorY, editorState.eraserRadius, 0, TAU);
+    targetCtx.fillStyle = "rgba(255, 255, 255, 0.14)";
+    targetCtx.fill();
+    targetCtx.lineWidth = 2;
+    targetCtx.strokeStyle = "rgba(255, 255, 255, 0.98)";
+    targetCtx.shadowColor = "rgba(15, 23, 42, 0.35)";
+    targetCtx.shadowBlur = 6;
+    targetCtx.stroke();
+    targetCtx.restore();
+}
+
+function syncStickerControls() {
+    const sticker = getEditorSelectedSticker();
+    const disabled = !sticker;
+
+    if (!sticker) {
+        editorState.eraserEnabled = false;
+        editorState.erasingStickerId = null;
+        editorState.eraseLastPoint = null;
+        editorState.eraserCursorVisible = false;
+    }
+
+    stickerScaleRangeEl.disabled = disabled;
+    stickerRotationRangeEl.disabled = disabled;
+    stickerEraserRangeEl.disabled = disabled || !editorState.eraserEnabled;
+    stickerEraserToggleBtnEl.disabled = disabled;
+    stickerFlipXBtnEl.disabled = disabled;
+    stickerFlipYBtnEl.disabled = disabled;
+    stickerRemoveBtnEl.disabled = disabled;
+    stickerEraserToggleBtnEl.classList.toggle("active", Boolean(sticker) && editorState.eraserEnabled);
+    stickerEraserToggleBtnEl.textContent = editorState.eraserEnabled ? "Tắt gôm" : "Bật gôm";
+    stickerEraserRangeEl.value = String(editorState.eraserRadius);
+    stickerEraserSizeValueEl.textContent = `${editorState.eraserRadius} px`;
+    editorCanvasEl.classList.toggle("eraser-active", Boolean(sticker) && editorState.eraserEnabled);
+
+    if (!sticker) {
+        stickerScaleRangeEl.value = "100";
+        stickerRotationRangeEl.value = "0";
+        editorSelectionNoteEl.textContent = "Chọn một sticker trong thư viện rồi kéo trực tiếp trên khung. Có thể bật gôm để xóa từng phần trên sticker.";
+        return;
+    }
+
+    stickerScaleRangeEl.value = String(Math.round(sticker.scale * 100));
+    stickerRotationRangeEl.value = String(Math.round(sticker.rotation * 180 / Math.PI));
+    editorSelectionNoteEl.textContent = editorState.eraserEnabled
+        ? `Gôm đang bật cho ${sticker.label}. Kéo trực tiếp trên sticker để xóa tự do.`
+        : `Đang chọn: ${sticker.label}. Kéo để di chuyển, cuộn để zoom, Shift + cuộn để xoay nhanh.`;
+}
+
+function renderEditorLayoutOptions() {
+    editorLayoutOptionsEl.innerHTML = COLLAGE_LAYOUTS.map((layout) => `
+        <button class="editor-option${layout.id === editorState.collageLayout ? " selected" : ""}" type="button" data-layout-id="${layout.id}">
+            <strong>${layout.label}</strong>
+            <span>${layout.hint}</span>
+        </button>
+    `).join("");
+}
+
+function renderEditorFrameOptions() {
+    editorFrameOptionsEl.innerHTML = FRAME_STYLES.map((frame) => `
+        <button class="editor-option${frame.id === editorState.frameStyle ? " selected" : ""}" type="button" data-frame-id="${frame.id}">
+            <strong>${frame.label}</strong>
+            <span>${frame.hint}</span>
+        </button>
+    `).join("");
+}
+
+function renderEditorPhotoPicker() {
+    if (!capturedPhotos.length) {
+        editorPhotoPickerEl.innerHTML = '<div class="editor-empty">Chưa có ảnh nào để ghép.</div>';
+        return;
+    }
+
+    editorPhotoPickerEl.innerHTML = capturedPhotos.map((photo) => `
+        <button class="editor-photo-chip${editorState.selectedPhotoIds.includes(photo.id) ? " selected" : ""}" type="button" data-photo-id="${photo.id}">
+            <img src="${photo.dataUrl}" alt="${photo.label}">
+            <div class="editor-photo-chip-meta">
+                <strong>${photo.label}</strong>
+                <span>${formatCaptureTime(photo.createdAt)}</span>
+            </div>
+        </button>
+    `).join("");
+}
+
+function renderStickerLibrary() {
+    const keyword = editorState.stickerSearch.trim().toLowerCase();
+    const filtered = STICKER_LIBRARY.filter((sticker) => {
+        if (!keyword) {
+            return true;
+        }
+
+        return sticker.label.toLowerCase().includes(keyword) || sticker.name.toLowerCase().includes(keyword);
+    });
+
+    if (!filtered.length) {
+        stickerListEl.innerHTML = '<div class="editor-empty">Không tìm thấy sticker phù hợp.</div>';
+        return;
+    }
+
+    stickerListEl.innerHTML = filtered.map((sticker) => `
+        <button class="sticker-item" type="button" data-sticker-id="${sticker.id}">
+            <img src="${sticker.src}" alt="${sticker.label}">
+            <span>${sticker.label}</span>
+        </button>
+    `).join("");
+}
+
+function renderEditorPanels() {
+    renderEditorLayoutOptions();
+    renderEditorFrameOptions();
+    renderEditorPhotoPicker();
+    renderStickerLibrary();
+    syncStickerControls();
+}
+
+function closeEditor() {
+    editorOverlayEl.classList.remove("visible");
+    editorOverlayEl.setAttribute("aria-hidden", "true");
+    editorState.isOpen = false;
+    editorState.dragStickerId = null;
+    editorState.eraserEnabled = false;
+    editorState.erasingStickerId = null;
+    editorState.eraseLastPoint = null;
+    editorState.eraserCursorVisible = false;
+    editorCanvasEl.classList.remove("dragging");
+    editorCanvasEl.classList.remove("eraser-active");
+}
+
+function openEditorFromHistory() {
+    const editorPhotos = getHistoryPhotosForEditor();
+    if (!editorPhotos.length) {
+        showToast("Hãy chọn một ảnh trong lịch sử trước.", 2200);
+        return;
+    }
+
+    closeHistoryDrawer();
+    toggleModeMenu(false);
+    setGuideOpen(false);
+    editorState.isOpen = true;
+    editorState.selectedPhotoIds = editorPhotos.map((photo) => photo.id);
+    editorState.collageLayout = editorPhotos.length >= 3
+        ? "grid"
+        : editorPhotos.length === 2
+            ? "split-v"
+            : "single";
+    editorState.frameStyle = "classic";
+    editorState.activeStickers = [];
+    editorState.selectedStickerId = null;
+    editorState.stickerSearch = "";
+    editorState.dragStickerId = null;
+    editorState.eraserEnabled = false;
+    editorState.erasingStickerId = null;
+    editorState.eraseLastPoint = null;
+    editorState.eraserCursorVisible = false;
+    stickerSearchInputEl.value = "";
+
+    editorOverlayEl.classList.add("visible");
+    editorOverlayEl.setAttribute("aria-hidden", "false");
+    renderEditorPanels();
+    renderEditorCanvas();
+}
+
+function toggleEditorPhotoSelection(photoId) {
+    const exists = editorState.selectedPhotoIds.includes(photoId);
+
+    if (exists) {
+        if (editorState.selectedPhotoIds.length === 1) {
+            showToast("Editor cần giữ ít nhất 1 ảnh.", 2200);
+            return;
+        }
+        editorState.selectedPhotoIds = editorState.selectedPhotoIds.filter((id) => id !== photoId);
+    } else {
+        if (editorState.selectedPhotoIds.length >= 4) {
+            showToast("Ghép ảnh tối đa 4 tấm ở bước này.", 2200);
+            return;
+        }
+        editorState.selectedPhotoIds = [...editorState.selectedPhotoIds, photoId];
+    }
+
+    renderEditorPhotoPicker();
+    renderEditorCanvas();
+}
+
+async function addStickerToEditor(stickerId) {
+    const definition = STICKER_LIBRARY.find((sticker) => sticker.id === stickerId);
+    if (!definition) {
+        return;
+    }
+
+    const image = await loadImageCached(definition.src);
+    const longestSide = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height);
+    const fitRatio = 190 / Math.max(1, longestSide);
+    const sticker = {
+        id: `active-sticker-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        label: definition.label,
+        src: definition.src,
+        width: Math.round((image.naturalWidth || image.width) * fitRatio),
+        height: Math.round((image.naturalHeight || image.height) * fitRatio),
+        x: editorCanvasEl.width / 2,
+        y: editorCanvasEl.height / 2,
+        scale: 1,
+        rotation: 0,
+        flipX: 1,
+        flipY: 1
+    };
+    const renderSurface = createStickerRenderSurface(image, sticker.width, sticker.height);
+    sticker.renderCanvas = renderSurface.renderCanvas;
+    sticker.renderCtx = renderSurface.renderCtx;
+
+    editorState.activeStickers.push(sticker);
+    editorState.selectedStickerId = sticker.id;
+    await renderEditorCanvas();
+}
+
+function drawRoundedRectPath(targetCtx, x, y, width, height, radius) {
+    const nextRadius = Math.min(radius, width / 2, height / 2);
+    targetCtx.beginPath();
+    targetCtx.moveTo(x + nextRadius, y);
+    targetCtx.lineTo(x + width - nextRadius, y);
+    targetCtx.quadraticCurveTo(x + width, y, x + width, y + nextRadius);
+    targetCtx.lineTo(x + width, y + height - nextRadius);
+    targetCtx.quadraticCurveTo(x + width, y + height, x + width - nextRadius, y + height);
+    targetCtx.lineTo(x + nextRadius, y + height);
+    targetCtx.quadraticCurveTo(x, y + height, x, y + height - nextRadius);
+    targetCtx.lineTo(x, y + nextRadius);
+    targetCtx.quadraticCurveTo(x, y, x + nextRadius, y);
+    targetCtx.closePath();
+}
+
+function getLayoutSlots(layoutId, count, width, height) {
+    const outer = 58;
+    const gap = 18;
+    const full = { x: outer, y: outer, w: width - outer * 2, h: height - outer * 2 };
+
+    if (count <= 1 || layoutId === "single") {
+        return [full];
+    }
+
+    if (layoutId === "split-v") {
+        const slotWidth = (full.w - gap) / 2;
+        return [
+            { x: full.x, y: full.y, w: slotWidth, h: full.h },
+            { x: full.x + slotWidth + gap, y: full.y, w: slotWidth, h: full.h }
+        ];
+    }
+
+    if (layoutId === "split-h") {
+        const slotHeight = (full.h - gap) / 2;
+        return [
+            { x: full.x, y: full.y, w: full.w, h: slotHeight },
+            { x: full.x, y: full.y + slotHeight + gap, w: full.w, h: slotHeight }
+        ];
+    }
+
+    if (count === 2) {
+        const slotWidth = (full.w - gap) / 2;
+        return [
+            { x: full.x, y: full.y, w: slotWidth, h: full.h },
+            { x: full.x + slotWidth + gap, y: full.y, w: slotWidth, h: full.h }
+        ];
+    }
+
+    if (count === 3) {
+        const topHeight = (full.h - gap) * 0.48;
+        const bottomHeight = full.h - gap - topHeight;
+        const topWidth = (full.w - gap) / 2;
+        return [
+            { x: full.x, y: full.y, w: topWidth, h: topHeight },
+            { x: full.x + topWidth + gap, y: full.y, w: topWidth, h: topHeight },
+            { x: full.x, y: full.y + topHeight + gap, w: full.w, h: bottomHeight }
+        ];
+    }
+
+    const slotWidth = (full.w - gap) / 2;
+    const slotHeight = (full.h - gap) / 2;
+    return [
+        { x: full.x, y: full.y, w: slotWidth, h: slotHeight },
+        { x: full.x + slotWidth + gap, y: full.y, w: slotWidth, h: slotHeight },
+        { x: full.x, y: full.y + slotHeight + gap, w: slotWidth, h: slotHeight },
+        { x: full.x + slotWidth + gap, y: full.y + slotHeight + gap, w: slotWidth, h: slotHeight }
+    ];
+}
+
+function drawImageCover(targetCtx, image, slot) {
+    const coverScale = Math.max(slot.w / image.width, slot.h / image.height);
+    const coverWidth = image.width * coverScale;
+    const coverHeight = image.height * coverScale;
+    const coverX = slot.x + (slot.w - coverWidth) / 2;
+    const coverY = slot.y + (slot.h - coverHeight) / 2;
+    const fitScale = Math.min(slot.w / image.width, slot.h / image.height);
+    const fitWidth = image.width * fitScale;
+    const fitHeight = image.height * fitScale;
+    const fitX = slot.x + (slot.w - fitWidth) / 2;
+    const fitY = slot.y + (slot.h - fitHeight) / 2;
+
+    targetCtx.save();
+    drawRoundedRectPath(targetCtx, slot.x, slot.y, slot.w, slot.h, 18);
+    targetCtx.clip();
+    targetCtx.fillStyle = "#edf2f7";
+    targetCtx.fillRect(slot.x, slot.y, slot.w, slot.h);
+
+    targetCtx.save();
+    targetCtx.globalAlpha = 0.24;
+    targetCtx.filter = "blur(18px) saturate(1.05)";
+    targetCtx.drawImage(image, coverX, coverY, coverWidth, coverHeight);
+    targetCtx.restore();
+
+    const glow = targetCtx.createLinearGradient(slot.x, slot.y, slot.x, slot.y + slot.h);
+    glow.addColorStop(0, "rgba(255,255,255,0.42)");
+    glow.addColorStop(1, "rgba(255,255,255,0.08)");
+    targetCtx.fillStyle = glow;
+    targetCtx.fillRect(slot.x, slot.y, slot.w, slot.h);
+    targetCtx.drawImage(image, fitX, fitY, fitWidth, fitHeight);
+    targetCtx.restore();
+
+    targetCtx.save();
+    drawRoundedRectPath(targetCtx, slot.x + 0.75, slot.y + 0.75, slot.w - 1.5, slot.h - 1.5, 18);
+    targetCtx.strokeStyle = "rgba(255,255,255,0.82)";
+    targetCtx.lineWidth = 1.5;
+    targetCtx.stroke();
+    targetCtx.restore();
+}
+
+function drawEditorFrame(targetCtx, width, height) {
+    const inset = 22;
+
+    if (editorState.frameStyle === "none") {
+        return;
+    }
+
+    if (editorState.frameStyle === "classic") {
+        targetCtx.save();
+        targetCtx.lineWidth = 18;
+        targetCtx.strokeStyle = "#ffffff";
+        targetCtx.shadowColor = "rgba(15,23,42,0.25)";
+        targetCtx.shadowBlur = 14;
+        targetCtx.strokeRect(inset, inset, width - inset * 2, height - inset * 2);
+        targetCtx.restore();
+        return;
+    }
+
+    if (editorState.frameStyle === "polaroid") {
+        targetCtx.save();
+        targetCtx.fillStyle = "#ffffff";
+        targetCtx.fillRect(18, 18, width - 36, 26);
+        targetCtx.fillRect(18, 18, 26, height - 36);
+        targetCtx.fillRect(width - 44, 18, 26, height - 36);
+        targetCtx.fillRect(18, height - 118, width - 36, 100);
+        targetCtx.restore();
+        return;
+    }
+
+    if (editorState.frameStyle === "neon") {
+        const gradient = targetCtx.createLinearGradient(0, 0, width, height);
+        gradient.addColorStop(0, "#22d3ee");
+        gradient.addColorStop(0.5, "#818cf8");
+        gradient.addColorStop(1, "#f472b6");
+        targetCtx.save();
+        targetCtx.strokeStyle = gradient;
+        targetCtx.lineWidth = 14;
+        targetCtx.shadowColor = "rgba(129,140,248,0.55)";
+        targetCtx.shadowBlur = 18;
+        targetCtx.strokeRect(inset, inset, width - inset * 2, height - inset * 2);
+        targetCtx.restore();
+        return;
+    }
+
+    if (editorState.frameStyle === "film") {
+        targetCtx.save();
+        targetCtx.fillStyle = "#121212";
+        targetCtx.fillRect(16, 16, width - 32, 34);
+        targetCtx.fillRect(16, height - 50, width - 32, 34);
+        targetCtx.fillRect(16, 16, 34, height - 32);
+        targetCtx.fillRect(width - 50, 16, 34, height - 32);
+        targetCtx.fillStyle = "#fef08a";
+        for (let y = 74; y < height - 74; y += 62) {
+            targetCtx.fillRect(24, y, 14, 28);
+            targetCtx.fillRect(width - 38, y, 14, 28);
+        }
+        targetCtx.restore();
+    }
+}
+
+function drawSticker(targetCtx, sticker, image, includeSelection) {
+    const source = sticker.renderCanvas || image;
+    if (!source) {
+        return;
+    }
+
+    targetCtx.save();
+    targetCtx.translate(sticker.x, sticker.y);
+    targetCtx.rotate(sticker.rotation);
+    targetCtx.scale(sticker.scale * sticker.flipX, sticker.scale * sticker.flipY);
+    targetCtx.drawImage(source, -sticker.width / 2, -sticker.height / 2, sticker.width, sticker.height);
+
+    if (includeSelection && sticker.id === editorState.selectedStickerId) {
+        targetCtx.strokeStyle = "rgba(34,197,94,0.95)";
+        targetCtx.lineWidth = 3 / Math.max(sticker.scale, 0.35);
+        targetCtx.setLineDash([10 / Math.max(sticker.scale, 0.35), 8 / Math.max(sticker.scale, 0.35)]);
+        targetCtx.strokeRect(
+            -sticker.width / 2 - 10 / Math.max(sticker.scale, 0.35),
+            -sticker.height / 2 - 10 / Math.max(sticker.scale, 0.35),
+            sticker.width + 20 / Math.max(sticker.scale, 0.35),
+            sticker.height + 20 / Math.max(sticker.scale, 0.35)
+        );
+        targetCtx.setLineDash([]);
+    }
+
+    targetCtx.restore();
+}
+
+async function renderEditorScene(targetCtx, targetCanvas, includeSelection, token = editorState.renderToken) {
+    const width = targetCanvas.width;
+    const height = targetCanvas.height;
+    const selectedPhotos = getEditorSelectedPhotos();
+    const photoImages = await Promise.all(selectedPhotos.map((photo) => loadImageCached(photo.dataUrl)));
+    const stickerSnapshot = editorState.activeStickers.map((sticker) => ({ ...sticker }));
+    const stickerImages = await Promise.all(stickerSnapshot.map((sticker) => loadImageCached(sticker.src)));
+
+    if (targetCtx === editorCtx && token !== editorState.renderToken) {
+        return false;
+    }
+
+    targetCtx.clearRect(0, 0, width, height);
+    targetCtx.fillStyle = "#f8fafc";
+    targetCtx.fillRect(0, 0, width, height);
+    targetCtx.fillStyle = "#e2e8f0";
+    targetCtx.fillRect(42, 42, width - 84, height - 84);
+
+    if (!photoImages.length) {
+        targetCtx.fillStyle = "#0f172a";
+        targetCtx.font = '600 34px "Sora", sans-serif';
+        targetCtx.textAlign = "center";
+        targetCtx.fillText("Chưa có ảnh để chỉnh sửa", width / 2, height / 2);
+    } else {
+        const slots = getLayoutSlots(editorState.collageLayout, photoImages.length, width, height);
+        photoImages.slice(0, slots.length).forEach((image, index) => {
+            drawImageCover(targetCtx, image, slots[index]);
+        });
+    }
+
+    drawEditorFrame(targetCtx, width, height);
+    stickerSnapshot.forEach((sticker, index) => drawSticker(targetCtx, sticker, stickerImages[index], includeSelection));
+    return true;
+}
+
+async function renderEditorCanvas() {
+    if (!editorState.isOpen) {
+        return;
+    }
+
+    const token = ++editorState.renderToken;
+    const rendered = await renderEditorScene(editorCtx, editorCanvasEl, true, token);
+    if (!rendered || token !== editorState.renderToken) {
+        return;
+    }
+
+    syncStickerControls();
+    drawEraserCursor(editorCtx);
+}
+
+async function exportEditorImage() {
+    if (!editorState.isOpen) {
+        return;
+    }
+
+    await renderEditorScene(editorExportCtx, editorExportCanvasEl, false, -1);
+    const dataUrl = editorExportCanvasEl.toDataURL("image/png");
+    pushCapturedPhoto(dataUrl, { labelPrefix: "Editor" });
+    downloadDataUrl(dataUrl, `picai-editor-${Date.now()}.png`);
+    showToast("✓ Đã xuất ảnh PNG!", 2400);
+}
+
+function stopStickerDrag(pointerId) {
+    editorState.dragStickerId = null;
+    editorState.erasingStickerId = null;
+    editorState.eraseLastPoint = null;
+    editorCanvasEl.classList.remove("dragging");
+    try {
+        if (pointerId !== undefined) {
+            editorCanvasEl.releasePointerCapture(pointerId);
+        }
+    } catch (error) {
+        // ignore pointer capture release failures
+    }
+}
+
+function initializeExtendedUi() {
+    renderCaptureDelayOptions();
+    renderHistoryDrawer();
+
+    captureDelayBtnEl.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (captureCountdownEndsAt) {
+            stopCaptureCountdown({ notifyCancel: true });
+            return;
+        }
+        toggleCaptureDelayMenu();
+    });
+
+    captureDelayMenuEl.addEventListener("click", (event) => {
+        const option = event.target.closest("[data-capture-delay]");
+        if (!option) {
+            return;
+        }
+
+        selectedCaptureDelay = Number(option.dataset.captureDelay);
+        renderCaptureDelayOptions();
+        toggleCaptureDelayMenu(false);
+        showToast(selectedCaptureDelay > 0 ? `⏱ Hẹn giờ ${selectedCaptureDelay} giây` : "⚡ Chụp ngay", 1700);
+    });
+
+    menuBtnEl.addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggleModeMenu();
+    });
+    historyModeBtnEl.addEventListener("click", openHistoryDrawer);
+    photobookModeBtnEl.addEventListener("click", openResearchModal);
+    historyCloseBtnEl.addEventListener("click", closeHistoryDrawer);
+    researchCloseBtnEl.addEventListener("click", closeResearchModal);
+    overlayBackdropEl.addEventListener("click", () => {
+        toggleModeMenu(false);
+        closeHistoryDrawer();
+        closeResearchModal();
+    });
+
+    historyListEl.addEventListener("click", (event) => {
+        const toggle = event.target.closest("[data-toggle-photo-id]");
+        if (toggle) {
+            toggleHistoryPhotoSelection(toggle.dataset.togglePhotoId);
+            return;
+        }
+
+        const item = event.target.closest(".history-item");
+        if (!item) {
+            return;
+        }
+
+        selectedHistoryPhotoId = item.dataset.photoId;
+        renderHistoryDrawer();
+    });
+
+    historyDownloadBtnEl.addEventListener("click", () => {
+        const photo = getSelectedHistoryPhoto();
+        if (!photo) {
+            return;
+        }
+
+        downloadDataUrl(photo.dataUrl, `${photo.id}.png`);
+        showToast("✓ Đã tải lại ảnh đã chọn!", 2000);
+    });
+    historyEditBtnEl.addEventListener("click", openEditorFromHistory);
+    historyClearSelectionBtnEl.addEventListener("click", clearHistoryPhotoSelection);
+
+    document.addEventListener("click", (event) => {
+        if (modeMenuEl.classList.contains("visible") && !modeMenuEl.contains(event.target) && !menuBtnEl.contains(event.target)) {
+            toggleModeMenu(false);
+        }
+
+        if (captureDelayMenuEl.classList.contains("visible") && !captureDelayMenuEl.contains(event.target) && !captureDelayBtnEl.contains(event.target)) {
+            toggleCaptureDelayMenu(false);
+        }
+    });
+
+    editorCloseBtnEl.addEventListener("click", closeEditor);
+    editorDownloadBtnEl.addEventListener("click", exportEditorImage);
+
+    editorLayoutOptionsEl.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-layout-id]");
+        if (!button) {
+            return;
+        }
+
+        editorState.collageLayout = button.dataset.layoutId;
+        renderEditorLayoutOptions();
+        renderEditorCanvas();
+    });
+
+    editorFrameOptionsEl.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-frame-id]");
+        if (!button) {
+            return;
+        }
+
+        editorState.frameStyle = button.dataset.frameId;
+        renderEditorFrameOptions();
+        renderEditorCanvas();
+    });
+
+    editorPhotoPickerEl.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-photo-id]");
+        if (!button) {
+            return;
+        }
+        toggleEditorPhotoSelection(button.dataset.photoId);
+    });
+
+    stickerSearchInputEl.addEventListener("input", (event) => {
+        editorState.stickerSearch = event.target.value;
+        renderStickerLibrary();
+    });
+
+    stickerListEl.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-sticker-id]");
+        if (!button) {
+            return;
+        }
+        addStickerToEditor(button.dataset.stickerId);
+    });
+
+    stickerScaleRangeEl.addEventListener("input", (event) => {
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) {
+            return;
+        }
+        sticker.scale = Number(event.target.value) / 100;
+        renderEditorCanvas();
+    });
+
+    stickerRotationRangeEl.addEventListener("input", (event) => {
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) {
+            return;
+        }
+        sticker.rotation = Number(event.target.value) * Math.PI / 180;
+        renderEditorCanvas();
+    });
+
+    stickerEraserRangeEl.addEventListener("input", (event) => {
+        editorState.eraserRadius = Number(event.target.value);
+        syncStickerControls();
+    });
+
+    stickerEraserToggleBtnEl.addEventListener("click", () => {
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) {
+            return;
+        }
+        editorState.eraserEnabled = !editorState.eraserEnabled;
+        editorState.dragStickerId = null;
+        editorState.erasingStickerId = null;
+        editorState.eraseLastPoint = null;
+        editorState.eraserCursorVisible = false;
+        editorCanvasEl.classList.remove("dragging");
+        syncStickerControls();
+        renderEditorCanvas();
+    });
+
+    stickerFlipXBtnEl.addEventListener("click", () => {
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) {
+            return;
+        }
+        sticker.flipX *= -1;
+        renderEditorCanvas();
+    });
+
+    stickerFlipYBtnEl.addEventListener("click", () => {
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) {
+            return;
+        }
+        sticker.flipY *= -1;
+        renderEditorCanvas();
+    });
+
+    stickerRemoveBtnEl.addEventListener("click", () => {
+        if (!editorState.selectedStickerId) {
+            return;
+        }
+        editorState.activeStickers = editorState.activeStickers.filter((sticker) => sticker.id !== editorState.selectedStickerId);
+        editorState.selectedStickerId = null;
+        renderEditorCanvas();
+    });
+
+    editorCanvasEl.addEventListener("pointerdown", (event) => {
+        if (!editorState.isOpen) {
+            return;
+        }
+
+        const point = getEditorCanvasPoint(event);
+        updateEraserCursor(point);
+        const sticker = findStickerAtPoint(point.x, point.y);
+
+        if (editorState.eraserEnabled) {
+            const targetSticker = sticker || getEditorSelectedSticker();
+            if (!targetSticker) {
+                editorState.selectedStickerId = null;
+                editorState.erasingStickerId = null;
+                renderEditorCanvas();
+                return;
+            }
+
+            editorState.selectedStickerId = targetSticker.id;
+            editorState.erasingStickerId = targetSticker.id;
+            editorState.eraseLastPoint = point;
+            eraseStickerStroke(targetSticker, point, point);
+            editorCanvasEl.setPointerCapture(event.pointerId);
+            renderEditorCanvas();
+            return;
+        }
+
+        if (!sticker) {
+            editorState.selectedStickerId = null;
+            renderEditorCanvas();
+            return;
+        }
+
+        editorState.selectedStickerId = sticker.id;
+        editorState.dragStickerId = sticker.id;
+        editorState.dragOffsetX = point.x - sticker.x;
+        editorState.dragOffsetY = point.y - sticker.y;
+        editorCanvasEl.setPointerCapture(event.pointerId);
+        editorCanvasEl.classList.add("dragging");
+        renderEditorCanvas();
+    });
+
+    editorCanvasEl.addEventListener("pointermove", (event) => {
+        const point = getEditorCanvasPoint(event);
+        if (editorState.eraserEnabled) {
+            updateEraserCursor(point);
+        }
+
+        if (editorState.erasingStickerId) {
+            const sticker = getEditorSelectedSticker();
+            if (!sticker) {
+                return;
+            }
+            eraseStickerStroke(sticker, editorState.eraseLastPoint || point, point);
+            editorState.eraseLastPoint = point;
+            renderEditorCanvas();
+            return;
+        }
+
+        if (editorState.eraserEnabled) {
+            renderEditorCanvas();
+            return;
+        }
+
+        if (!editorState.dragStickerId) {
+            return;
+        }
+
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) {
+            return;
+        }
+        sticker.x = clamp(point.x - editorState.dragOffsetX, 0, editorCanvasEl.width);
+        sticker.y = clamp(point.y - editorState.dragOffsetY, 0, editorCanvasEl.height);
+        renderEditorCanvas();
+    });
+
+    editorCanvasEl.addEventListener("pointerup", (event) => stopStickerDrag(event.pointerId));
+    editorCanvasEl.addEventListener("pointercancel", (event) => stopStickerDrag(event.pointerId));
+    editorCanvasEl.addEventListener("pointerenter", (event) => {
+        if (!editorState.eraserEnabled) {
+            return;
+        }
+        updateEraserCursor(getEditorCanvasPoint(event));
+        renderEditorCanvas();
+    });
+    editorCanvasEl.addEventListener("pointerleave", () => {
+        if (!editorState.eraserEnabled) {
+            return;
+        }
+        editorState.eraserCursorVisible = false;
+        if (!editorState.erasingStickerId) {
+            renderEditorCanvas();
+        }
+    });
+    editorCanvasEl.addEventListener("wheel", (event) => {
+        if (!editorState.isOpen) {
+            return;
+        }
+
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) {
+            return;
+        }
+
+        event.preventDefault();
+        if (event.shiftKey) {
+            sticker.rotation += event.deltaY < 0 ? 0.06 : -0.06;
+        } else {
+            sticker.scale = clamp(sticker.scale * (event.deltaY < 0 ? 1.05 : 0.95), 0.4, 2.2);
+        }
+        renderEditorCanvas();
+    }, { passive: false });
+
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+            stopCaptureCountdown();
+        }
+    });
+}
+
+function checkOpenPalmGesture(landmarks) {
+    return isFingerExtended(landmarks, 4, 3) &&
+        isFingerExtended(landmarks, 8, 6) &&
+        isFingerExtended(landmarks, 12, 10) &&
+        isFingerExtended(landmarks, 16, 14) &&
+        isFingerExtended(landmarks, 20, 18);
+}
+
+function buildOpenPalmShape(landmarks, width, height) {
+    const center = getPalmCenter(landmarks, width, height);
+    const tips = [4, 8, 12, 16, 20].map((index) => getMirroredPoint(landmarks, index, width, height));
+    const palmLeft = getMirroredPoint(landmarks, 5, width, height);
+    const palmRight = getMirroredPoint(landmarks, 17, width, height);
+    const averageRadius = tips.reduce((sum, tip) => sum + distance(center, tip), 0) / tips.length;
+    const palmWidth = distance(palmLeft, palmRight);
+    const radius = clamp(Math.max(averageRadius * 0.98, palmWidth * 1.06), 72, Math.min(width, height) * 0.32);
+
+    return {
+        type: "ellipse",
+        cx: center.x,
+        cy: center.y,
+        rx: radius,
+        ry: radius,
+        angle: 0
+    };
+}
+
+function detectGesture(handLandmarks, width, height) {
+    if (!handLandmarks.length) {
+        return null;
+    }
+
+    const sortedHands = [...handLandmarks].sort((handA, handB) => {
+        const xA = getMirroredPoint(handA, 8, width, height).x;
+        const xB = getMirroredPoint(handB, 8, width, height).x;
+        return xA - xB;
+    });
+
+    if (sortedHands.length >= 2) {
+        const leftHand = sortedHands[0];
+        const rightHand = sortedHands[sortedHands.length - 1];
+
+        if (checkLFrameGesture(leftHand) && checkLFrameGesture(rightHand)) {
+            return {
+                shape: buildQuadShape(leftHand, rightHand, width, height),
+                label: "TỨ GIÁC 3D"
+            };
+        }
+
+        if (checkStretchCircleGesture(leftHand, rightHand)) {
+            return {
+                shape: buildEllipseShape(leftHand, rightHand, width, height),
+                label: "ELLIPSE KÉO DÃN"
+            };
+        }
+    }
+
+    for (const hand of sortedHands) {
+        if (checkOpenPalmGesture(hand)) {
+            return {
+                shape: buildOpenPalmShape(hand, width, height),
+                label: "VÒNG TRÒN LỚN"
+            };
+        }
+
+        if (checkPeaceGesture(hand)) {
+            return {
+                shape: buildStarShape(hand, width, height),
+                label: "NGÔI SAO"
+            };
+        }
+
+        if (checkTriangleGesture(hand)) {
+            return {
+                shape: buildTriangleShape(hand, width, height),
+                label: "TAM GIÁC"
+            };
+        }
+    }
+
+    return null;
+}
+
+function showToast(message, duration = 2200) {
+    window.clearTimeout(state.toastTimer);
+    toastEl.textContent = message;
+    toastEl.classList.remove("is-hidden");
+    state.toastTimer = window.setTimeout(() => {
+        toastEl.classList.add("is-hidden");
+    }, duration);
+}
+
+function updateLiveStatus() {
+    if (!state.cameraRunning) {
+        return;
+    }
+
+    if (captureCountdownEndsAt) {
+        const remainingSeconds = Math.max(1, Math.ceil((captureCountdownEndsAt - Date.now()) / 1000));
+        setCameraStatus(`Chuẩn bị chụp sau ${remainingSeconds}s`, "is-live");
+        return;
+    }
+
+    if (state.lockedShape) {
+        setCameraStatus("Đã khóa khung kính", "is-lock");
+        return;
+    }
+
+    if (state.activeLabel) {
+        const percent = Math.max(1, Math.round(state.progress * 100));
+        if (state.progress >= 0.08) {
+            setCameraStatus(`Giữ ổn định ${state.activeLabel} ${percent}%`, "is-live");
+        } else {
+            setCameraStatus(`Đang nhận diện ${state.activeLabel}`, "is-waiting");
+        }
+        return;
+    }
+
+    setCameraStatus("Đưa tay vào khung", "is-waiting");
+}
+
+function clearLock() {
+    state.lockedShape = null;
+    state.lockedLabel = "";
+    setFreezeVisible(false);
+    resetTracking();
+    toggleClearButton();
+    setGestureTag("");
+    updateLiveStatus();
+}
+
+function copyCurrentFrameToFrozen(width, height) {
+    freezeCanvasEl.width = width;
+    freezeCanvasEl.height = height;
+    freezeCtx.clearRect(0, 0, width, height);
+    freezeCtx.save();
+    freezeCtx.scale(-1, 1);
+    freezeCtx.drawImage(videoEl, -width, 0, width, height);
+    freezeCtx.restore();
+    setFreezeVisible(true);
+}
+
+function exportCanvasAsPng() {
+    startCaptureFlow();
+}
+
+function handleKeydown(event) {
+    const activeTag = document.activeElement?.tagName;
+    const isTextInput = activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT";
+
+    if (event.code === "Space" && !isTextInput && !editorState.isOpen) {
+        event.preventDefault();
+        startCaptureFlow();
+        return;
+    }
+
+    if (event.key !== "Escape") {
+        return;
+    }
+
+    if (captureCountdownEndsAt) {
+        stopCaptureCountdown({ notifyCancel: true });
+        return;
+    }
+
+    if (editorState.isOpen) {
+        closeEditor();
+        return;
+    }
+
+    if (researchModalEl.classList.contains("visible")) {
+        closeResearchModal();
+        return;
+    }
+
+    if (historyDrawerEl.classList.contains("visible")) {
+        closeHistoryDrawer();
+        return;
+    }
+
+    if (captureDelayMenuEl.classList.contains("visible")) {
+        toggleCaptureDelayMenu(false);
+        return;
+    }
+
+    if (modeMenuEl.classList.contains("visible")) {
+        toggleModeMenu(false);
+        return;
+    }
+
+    if (state.guideOpen) {
+        setGuideOpen(false);
+        return;
+    }
+
+    clearLock();
+}
+
+initializeExtendedUi();
