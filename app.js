@@ -205,6 +205,20 @@ function buildPerformanceProfile() {
     };
 }
 
+
+
+function debounceFrame(callback) {
+    let scheduled = false;
+    return (...args) => {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(() => {
+            scheduled = false;
+            callback(...args);
+        });
+    };
+}
+
 function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
 }
@@ -1293,7 +1307,10 @@ document.addEventListener("visibilitychange", () => {
         boot();
     }
 });
-window.addEventListener("resize", syncLayoutMode);
+window.addEventListener("resize", debounceFrame(() => {
+    syncLayoutMode();
+    fitCanvasToViewport();
+}));
 window.addEventListener("pagehide", stopCamera);
 window.addEventListener("beforeunload", stopCamera);
 

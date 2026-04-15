@@ -40,3 +40,10 @@ Mở:
 ## Lưu ý
 
 Camera cần chạy trên `http://localhost` hoặc `https`.
+
+
+## Lưu ý khi deploy GitHub Pages
+
+- File `index.html` phải trỏ đúng tới `./styles.css` và `./app.js`.
+- Nếu trang hiện ra chữ thô không có giao diện, thường là do sai tên file CSS/JS hoặc đường dẫn asset.
+- Camera chỉ hoạt động khi chạy qua `https` hoặc `localhost`.
