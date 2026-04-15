@@ -1,0 +1,3254 @@
+﻿<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Glass Effects</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        :root {
+            --primary: #6366f1;
+            --accent:  #a78bfa;
+            --bg:      #0a0a12;
+            --glass-border: rgba(255,255,255,0.75);
+            --snap-ring: #6366f1;
+            --capture-side-offset: max(16px, calc(env(safe-area-inset-right) + 12px));
+            --capture-btn-size: 84px;
+            --capture-delay-btn-size: 62px;
+            --capture-gap: 12px;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; }
+
+        body, html {
+            margin: 0; padding: 0;
+            width: 100%; height: 100%;
+            min-height: 100dvh;
+            background: var(--bg);
+            font-family: 'Be Vietnam Pro', 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #loading {
+            position: fixed;
+            inset: 0;
+            background: var(--bg);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+            gap: 16px;
+            transition: opacity 0.6s ease;
+        }
+        #loading.hidden { opacity: 0; pointer-events: none; }
+
+        .spinner {
+            width: 52px; height: 52px;
+            border: 4px solid rgba(255,255,255,0.08);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        #loading h2 {
+            margin: 0;
+            font-size: 1.1rem;
+            font-weight: 400;
+            letter-spacing: 0.08em;
+            color: rgba(255,255,255,0.7);
+        }
+
+        #error-screen {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: var(--bg);
+            z-index: 100;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+            gap: 12px;
+            text-align: center;
+            padding: 32px;
+        }
+        #error-screen.visible { display: flex; }
+        #error-screen .icon { font-size: 3rem; }
+        #error-screen h2 { margin: 0; font-size: 1.3rem; color: #f87171; }
+        #error-screen p { margin: 0; color: rgba(255,255,255,0.5); font-size: 0.9rem; max-width: 340px; }
+
+        .video-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            height: 100dvh;
+        }
+        .input_video { display: none; }
+        .output_canvas {
+            width: 100%; height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            cursor: pointer;
+            touch-action: manipulation;
+        }
+
+        #hud {
+            position: fixed;
+            bottom: max(24px, calc(env(safe-area-inset-bottom) + 12px));
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 12px;
+            width: min(920px, calc(100vw - 32px));
+            z-index: 10;
+            transition: opacity 0.5s;
+        }
+        #hud.hidden { opacity: 0; pointer-events: none; }
+
+        .gesture-card {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.12);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 12px;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+            color: rgba(255,255,255,0.8);
+            font-size: 0.78rem;
+            white-space: nowrap;
+        }
+        .gesture-card .emoji { font-size: 1.3rem; }
+        .gesture-card .label { line-height: 1.3; }
+        .gesture-card .label b { display: block; font-size: 0.85rem; color: #fff; font-weight: 600; }
+
+        #gesture-tag {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(99, 102, 241, 0.25);
+            border: 1px solid rgba(99, 102, 241, 0.5);
+            backdrop-filter: blur(8px);
+            color: #fff;
+            padding: 5px 16px;
+            border-radius: 99px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            z-index: 10;
+            opacity: 0;
+            transition: opacity 0.25s;
+        }
+        #gesture-tag.visible { opacity: 1; }
+
+        #clear-hint {
+            position: fixed;
+            top: max(20px, calc(env(safe-area-inset-top) + 8px));
+            right: max(20px, calc(env(safe-area-inset-right) + 12px));
+            color: rgba(255,255,255,0.35);
+            font-size: 0.72rem;
+            z-index: 10;
+            letter-spacing: 0.05em;
+            line-height: 1.7;
+            text-align: right;
+        }
+
+        #capture-btn {
+            position: fixed;
+            top: 50%;
+            right: var(--capture-side-offset);
+            transform: translateY(-50%);
+            width: var(--capture-btn-size);
+            height: var(--capture-btn-size);
+            border: 4px solid rgba(255,255,255,0.92);
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff 0%, #dbe4ff 100%);
+            box-shadow:
+                0 18px 34px rgba(0,0,0,0.35),
+                0 0 0 10px rgba(99,102,241,0.18);
+            color: #111827;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 30;
+            padding: 0;
+            user-select: none;
+            touch-action: manipulation;
+            overflow: hidden;
+            transition: transform 0.16s ease, box-shadow 0.16s ease;
+        }
+        #capture-btn.countdown-active {
+            box-shadow:
+                0 18px 34px rgba(0,0,0,0.35),
+                0 0 0 12px rgba(34,197,94,0.28);
+        }
+        #capture-btn::before {
+            content: '';
+            position: absolute;
+            inset: 10px;
+            border-radius: inherit;
+            background: linear-gradient(180deg, #ffffff 0%, #f4f7ff 100%);
+            border: 1px solid rgba(255,255,255,0.9);
+        }
+        #capture-btn img {
+            position: relative;
+            z-index: 1;
+            width: 44px;
+            height: 44px;
+            object-fit: contain;
+            display: block;
+            filter: drop-shadow(0 4px 10px rgba(15, 23, 42, 0.16));
+        }
+        #capture-btn .capture-fallback {
+            position: relative;
+            z-index: 1;
+            display: none;
+            font-size: 2rem;
+            line-height: 1;
+        }
+        #capture-btn.fallback-visible img {
+            display: none;
+        }
+        #capture-btn.fallback-visible .capture-fallback {
+            display: block;
+        }
+        #capture-btn:active {
+            transform: translateY(-50%) scale(0.96);
+            box-shadow:
+                0 12px 24px rgba(0,0,0,0.3),
+                0 0 0 8px rgba(99,102,241,0.16);
+        }
+        #capture-btn:focus-visible {
+            outline: 3px solid rgba(191, 219, 254, 0.95);
+            outline-offset: 4px;
+        }
+
+        #capture-delay-btn {
+            position: fixed;
+            top: calc(50% + (var(--capture-btn-size) / 2) + (var(--capture-delay-btn-size) / 2) + var(--capture-gap));
+            right: var(--capture-side-offset);
+            transform: translateY(-50%);
+            width: var(--capture-delay-btn-size);
+            height: var(--capture-delay-btn-size);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 22px;
+            background: rgba(9,14,26,0.82);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            box-shadow: 0 14px 28px rgba(0,0,0,0.32);
+            color: #e5e7eb;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 30;
+            padding: 0;
+            user-select: none;
+            touch-action: manipulation;
+            overflow: hidden;
+            transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+        }
+        #capture-delay-btn img {
+            width: 28px;
+            height: 28px;
+            object-fit: contain;
+            display: block;
+            filter: drop-shadow(0 4px 10px rgba(15,23,42,0.2));
+        }
+        #capture-delay-btn .capture-delay-fallback {
+            display: none;
+            font-size: 1.35rem;
+            line-height: 1;
+        }
+        #capture-delay-btn.fallback-visible img {
+            display: none;
+        }
+        #capture-delay-btn.fallback-visible .capture-delay-fallback {
+            display: block;
+        }
+        #capture-delay-btn .delay-badge {
+            position: absolute;
+            right: 5px;
+            bottom: 5px;
+            min-width: 28px;
+            padding: 4px 7px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.92);
+            color: #111827;
+            font-size: 0.62rem;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+            line-height: 1;
+        }
+        #capture-delay-btn.countdown-active {
+            border-color: rgba(34,197,94,0.65);
+            box-shadow:
+                0 14px 28px rgba(0,0,0,0.32),
+                0 0 0 8px rgba(34,197,94,0.18);
+        }
+        #capture-delay-btn:active {
+            transform: translateY(-50%) scale(0.96);
+        }
+        #capture-delay-btn:focus-visible {
+            outline: 3px solid rgba(191, 219, 254, 0.95);
+            outline-offset: 4px;
+        }
+
+        #capture-delay-menu {
+            position: fixed;
+            top: calc(50% + (var(--capture-btn-size) / 2) + (var(--capture-delay-btn-size) / 2) + var(--capture-gap));
+            right: calc(var(--capture-side-offset) + var(--capture-delay-btn-size) + 14px);
+            transform: translateY(-50%) scale(0.96);
+            transform-origin: right center;
+            min-width: 206px;
+            padding: 10px;
+            border-radius: 20px;
+            background: rgba(8,12,24,0.88);
+            border: 1px solid rgba(255,255,255,0.12);
+            box-shadow: 0 22px 46px rgba(0,0,0,0.36);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 35;
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+        #capture-delay-menu.visible {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(-50%) scale(1);
+        }
+        .capture-delay-option {
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            background: rgba(255,255,255,0.04);
+            color: rgba(255,255,255,0.82);
+            padding: 10px 12px;
+            font: inherit;
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            cursor: pointer;
+            transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+        }
+        .capture-delay-option.active {
+            border-color: rgba(34,197,94,0.55);
+            background: rgba(34,197,94,0.16);
+            color: #bbf7d0;
+        }
+
+        #capture-countdown {
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%) scale(0.86);
+            width: min(152px, calc(100vw - 40px));
+            aspect-ratio: 1 / 1;
+            border-radius: 999px;
+            background:
+                radial-gradient(circle at 35% 30%, rgba(255,255,255,0.18), rgba(255,255,255,0) 54%),
+                rgba(7,10,20,0.82);
+            border: 1px solid rgba(255,255,255,0.16);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            box-shadow: 0 28px 54px rgba(0,0,0,0.4);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            color: #fff;
+            z-index: 45;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+        #capture-countdown.visible {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
+        }
+        #capture-countdown strong {
+            font-size: clamp(2.8rem, 5vw, 3.4rem);
+            line-height: 1;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+        }
+        #capture-countdown small {
+            color: rgba(255,255,255,0.72);
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        #save-toast {
+            position: fixed;
+            bottom: max(90px, calc(env(safe-area-inset-bottom) + 84px));
+            left: 50%;
+            transform: translateX(-50%) translateY(10px);
+            background: rgba(34, 197, 94, 0.2);
+            border: 1px solid rgba(34, 197, 94, 0.5);
+            backdrop-filter: blur(8px);
+            color: #86efac;
+            padding: 8px 20px;
+            border-radius: 99px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            z-index: 20;
+            opacity: 0;
+            transition: opacity 0.2s, transform 0.2s;
+            pointer-events: none;
+        }
+        #save-toast.visible {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        #menu-btn {
+            position: fixed;
+            top: max(16px, calc(env(safe-area-inset-top) + 8px));
+            left: max(16px, calc(env(safe-area-inset-left) + 8px));
+            width: 54px;
+            height: 54px;
+            border: 1px solid rgba(255,255,255,0.14);
+            border-radius: 16px;
+            background: rgba(8,12,24,0.72);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            z-index: 40;
+            padding: 0;
+            box-shadow: 0 12px 28px rgba(0,0,0,0.28);
+        }
+        #menu-btn span {
+            width: 22px;
+            height: 2px;
+            border-radius: 999px;
+            background: #fff;
+        }
+
+        #mode-menu {
+            position: fixed;
+            top: max(78px, calc(env(safe-area-inset-top) + 70px));
+            left: max(16px, calc(env(safe-area-inset-left) + 8px));
+            min-width: 260px;
+            padding: 10px;
+            border-radius: 18px;
+            background: rgba(8,12,24,0.9);
+            border: 1px solid rgba(255,255,255,0.12);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.34);
+            z-index: 45;
+            display: none;
+        }
+        #mode-menu.visible { display: block; }
+        .menu-title {
+            color: rgba(255,255,255,0.55);
+            font-size: 0.72rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            padding: 6px 8px 10px;
+        }
+        .menu-item {
+            width: 100%;
+            border: 0;
+            border-radius: 14px;
+            background: transparent;
+            color: #fff;
+            text-align: left;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            cursor: pointer;
+        }
+        .menu-item:hover,
+        .menu-item:focus-visible {
+            background: rgba(255,255,255,0.08);
+            outline: none;
+        }
+        .menu-item strong {
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+        .menu-item small {
+            color: rgba(255,255,255,0.58);
+            font-size: 0.78rem;
+            line-height: 1.35;
+        }
+
+        #history-drawer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: min(920px, 100vw);
+            height: 100dvh;
+            background: rgba(5,8,18,0.96);
+            border-right: 1px solid rgba(255,255,255,0.08);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            box-shadow: 22px 0 54px rgba(0,0,0,0.34);
+            z-index: 50;
+            transform: translateX(-100%);
+            transition: transform 0.24s ease;
+            display: flex;
+            flex-direction: column;
+        }
+        #history-drawer.visible {
+            transform: translateX(0);
+        }
+        .drawer-header {
+            padding: max(18px, calc(env(safe-area-inset-top) + 12px)) 18px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .drawer-header h3 {
+            margin: 0;
+            color: #fff;
+            font-size: 1rem;
+        }
+        .drawer-header p {
+            margin: 4px 0 0;
+            color: rgba(255,255,255,0.5);
+            font-size: 0.8rem;
+        }
+        .drawer-close {
+            width: 38px;
+            height: 38px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(255,255,255,0.04);
+            color: #fff;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+        .drawer-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 18px 20px;
+            display: grid;
+            grid-template-columns: minmax(0, 1.35fr) minmax(250px, 0.82fr);
+            align-content: start;
+            gap: 16px;
+        }
+        #history-empty,
+        #history-list {
+            grid-column: 1;
+        }
+        #history-empty {
+            padding: 18px;
+            border-radius: 18px;
+            border: 1px dashed rgba(255,255,255,0.14);
+            color: rgba(255,255,255,0.58);
+            background: rgba(255,255,255,0.03);
+            line-height: 1.55;
+        }
+        #history-preview {
+            display: none;
+            grid-column: 2;
+            grid-row: 1 / span 2;
+            align-self: start;
+            position: sticky;
+            top: 0;
+            border-radius: 20px;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+        }
+        #history-preview.visible { display: block; }
+        #history-preview img {
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            object-fit: cover;
+            display: block;
+            background: #111827;
+        }
+        .history-preview-meta {
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .history-preview-meta strong {
+            color: #fff;
+            font-size: 0.92rem;
+        }
+        .history-preview-meta span {
+            color: rgba(255,255,255,0.54);
+            font-size: 0.75rem;
+        }
+        .history-actions {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .history-action {
+            min-width: 0;
+            border: 0;
+            border-radius: 12px;
+            padding: 10px 12px;
+            font-weight: 700;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .history-action.primary {
+            grid-column: 1 / -1;
+            background: #22c55e;
+            color: #08110f;
+        }
+        .history-action.secondary {
+            background: rgba(255,255,255,0.08);
+            color: #fff;
+        }
+        .history-action:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .history-note {
+            color: rgba(255,255,255,0.45);
+            font-size: 0.72rem;
+            line-height: 1.45;
+            padding-top: 2px;
+        }
+        .history-selection-count {
+            color: rgba(134, 239, 172, 0.95);
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        #history-list {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            align-content: start;
+        }
+        .history-item {
+            position: relative;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 14px;
+            background: rgba(255,255,255,0.04);
+            overflow: hidden;
+            cursor: pointer;
+            padding: 0;
+            color: inherit;
+        }
+        .history-item.focused {
+            border-color: rgba(99,102,241,0.75);
+            box-shadow: 0 0 0 1px rgba(99,102,241,0.45);
+        }
+        .history-item.selected {
+            border-color: rgba(34,197,94,0.75);
+            box-shadow: 0 0 0 1px rgba(34,197,94,0.35);
+        }
+        .history-item.selected.focused {
+            box-shadow:
+                0 0 0 1px rgba(34,197,94,0.35),
+                0 0 0 3px rgba(99,102,241,0.2);
+        }
+        .history-item img {
+            width: 100%;
+            aspect-ratio: 1 / 0.92;
+            object-fit: cover;
+            display: block;
+            background: #111827;
+        }
+        .history-item-toggle {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 30px;
+            height: 30px;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,0.18);
+            background: rgba(8,12,24,0.82);
+            color: #fff;
+            font-size: 0.9rem;
+            font-weight: 800;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 2;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        .history-item.selected .history-item-toggle {
+            background: #22c55e;
+            color: #08110f;
+            border-color: rgba(34,197,94,0.9);
+        }
+        .history-item-meta {
+            padding: 8px 9px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        .history-item-meta strong {
+            color: #fff;
+            font-size: 0.76rem;
+        }
+        .history-item-meta span {
+            color: rgba(255,255,255,0.5);
+            font-size: 0.67rem;
+        }
+
+        #overlay-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(2,6,14,0.45);
+            z-index: 44;
+            display: none;
+        }
+        #overlay-backdrop.visible { display: block; }
+
+        #research-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 55;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+        #research-modal.visible { display: flex; }
+        .research-card {
+            width: min(440px, calc(100vw - 32px));
+            border-radius: 24px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(8,12,24,0.96);
+            box-shadow: 0 24px 60px rgba(0,0,0,0.45);
+            padding: 24px;
+            color: #fff;
+        }
+        .research-card h3 {
+            margin: 0 0 10px;
+            font-size: 1.1rem;
+        }
+        .research-card p {
+            margin: 0 0 16px;
+            color: rgba(255,255,255,0.64);
+            line-height: 1.55;
+        }
+        .research-card button {
+            border: 0;
+            border-radius: 12px;
+            background: #6366f1;
+            color: #fff;
+            padding: 10px 16px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        #editor-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 70;
+            display: none;
+            background:
+                radial-gradient(circle at top left, rgba(99,102,241,0.12), transparent 28%),
+                rgba(3,6,14,0.92);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            padding: 24px;
+        }
+        #editor-overlay.visible {
+            display: block;
+        }
+        .editor-shell {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            max-width: min(1520px, calc(100vw - 20px));
+            margin: 0 auto;
+        }
+        .editor-topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            padding: 0 4px;
+        }
+        .editor-topbar h3 {
+            margin: 0;
+            color: #fff;
+            font-size: 1.08rem;
+        }
+        .editor-topbar p {
+            margin: 6px 0 0;
+            color: rgba(255,255,255,0.58);
+            font-size: 0.78rem;
+        }
+        .editor-top-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        #editor-download-btn {
+            border: 0;
+            border-radius: 14px;
+            background: #22c55e;
+            color: #07110d;
+            padding: 11px 16px;
+            font-weight: 800;
+            cursor: pointer;
+            box-shadow: 0 14px 28px rgba(34,197,94,0.25);
+        }
+        #editor-close-btn {
+            width: 42px;
+            height: 42px;
+            border-radius: 14px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(255,255,255,0.06);
+            color: #fff;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+        .editor-body {
+            min-height: 0;
+            flex: 1;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(290px, 340px);
+            gap: 16px;
+        }
+        .editor-stage-wrap {
+            min-height: 0;
+            border-radius: 24px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(9,13,26,0.88);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 18px;
+            overflow: hidden;
+        }
+        #editor-canvas {
+            width: min(100%, 660px);
+            max-height: 100%;
+            aspect-ratio: 4 / 5;
+            border-radius: 22px;
+            background: #ffffff;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.28);
+            cursor: grab;
+            touch-action: none;
+        }
+        #editor-canvas.dragging {
+            cursor: grabbing;
+        }
+        #editor-canvas.eraser-active {
+            cursor: crosshair;
+        }
+        #editor-canvas.eraser-active.dragging {
+            cursor: crosshair;
+        }
+        .editor-panel {
+            min-height: 0;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding-right: 2px;
+        }
+        .editor-section {
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(9,13,26,0.84);
+            padding: 13px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .editor-section h4 {
+            margin: 0;
+            color: #fff;
+            font-size: 0.9rem;
+        }
+        .editor-helper {
+            color: rgba(255,255,255,0.5);
+            font-size: 0.72rem;
+            line-height: 1.45;
+        }
+        .editor-option-row {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .editor-option {
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            background: rgba(255,255,255,0.04);
+            color: #fff;
+            text-align: left;
+            padding: 9px 10px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        .editor-option strong {
+            font-size: 0.78rem;
+        }
+        .editor-option span {
+            color: rgba(255,255,255,0.48);
+            font-size: 0.66rem;
+        }
+        .editor-option.selected {
+            border-color: rgba(99,102,241,0.75);
+            background: rgba(99,102,241,0.14);
+            box-shadow: inset 0 0 0 1px rgba(99,102,241,0.25);
+        }
+        .editor-photo-picker {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .editor-photo-chip {
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 14px;
+            background: rgba(255,255,255,0.03);
+            overflow: hidden;
+            padding: 0;
+            cursor: pointer;
+            color: inherit;
+        }
+        .editor-photo-chip.selected {
+            border-color: rgba(34,197,94,0.8);
+            box-shadow: inset 0 0 0 1px rgba(34,197,94,0.35);
+        }
+        .editor-photo-chip img {
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            object-fit: contain;
+            display: block;
+            background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
+        }
+        .editor-photo-chip-meta {
+            padding: 7px 8px 9px;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        .editor-photo-chip-meta strong {
+            color: #fff;
+            font-size: 0.74rem;
+        }
+        .editor-photo-chip-meta span {
+            color: rgba(255,255,255,0.48);
+            font-size: 0.64rem;
+        }
+        .editor-search {
+            width: 100%;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            background: rgba(255,255,255,0.04);
+            color: #fff;
+            padding: 9px 11px;
+            outline: none;
+            font-family: inherit;
+        }
+        .editor-search::placeholder {
+            color: rgba(255,255,255,0.32);
+        }
+        .sticker-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+            max-height: 220px;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+        .sticker-item {
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            background: rgba(255,255,255,0.03);
+            padding: 8px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            align-items: center;
+            justify-content: center;
+            min-height: 88px;
+        }
+        .sticker-item img {
+            width: 44px;
+            height: 44px;
+            object-fit: contain;
+        }
+        .sticker-item span {
+            color: rgba(255,255,255,0.62);
+            font-size: 0.62rem;
+            text-align: center;
+            line-height: 1.35;
+        }
+        .editor-control {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            color: rgba(255,255,255,0.76);
+            font-size: 0.74rem;
+        }
+        .editor-control-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .editor-inline-value {
+            color: #86efac;
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        .editor-control input[type="range"] {
+            width: 100%;
+        }
+        .editor-action-row {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .editor-action-row.compact {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .editor-action-btn {
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+            padding: 9px 10px;
+            font-weight: 700;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.76rem;
+        }
+        .editor-action-btn.active {
+            color: #dcfce7;
+            border-color: rgba(34,197,94,0.72);
+            background: rgba(34,197,94,0.16);
+            box-shadow: inset 0 0 0 1px rgba(34,197,94,0.16);
+        }
+        .editor-action-btn.danger {
+            color: #fecaca;
+            border-color: rgba(248,113,113,0.32);
+            background: rgba(127,29,29,0.22);
+        }
+        .editor-empty {
+            color: rgba(255,255,255,0.42);
+            font-size: 0.72rem;
+            line-height: 1.5;
+            padding: 10px 0 2px;
+        }
+
+        @media (max-width: 900px) {
+            :root {
+                --capture-side-offset: max(12px, calc(env(safe-area-inset-right) + 10px));
+                --capture-btn-size: 74px;
+                --capture-delay-btn-size: 56px;
+                --capture-gap: 10px;
+            }
+
+            #hud {
+                width: calc(100vw - 24px);
+                gap: 8px;
+            }
+
+            .gesture-card {
+                flex: 1 1 calc(50% - 8px);
+                padding: 10px 12px;
+                white-space: normal;
+            }
+
+            #clear-hint {
+                top: auto;
+                right: auto;
+                left: max(12px, calc(env(safe-area-inset-left) + 8px));
+                bottom: max(104px, calc(env(safe-area-inset-bottom) + 96px));
+                text-align: left;
+                max-width: calc(100vw - 120px);
+                background: rgba(10,10,18,0.45);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 12px;
+                padding: 8px 10px;
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
+            }
+
+            #gesture-tag {
+                max-width: calc(100vw - 24px);
+                text-align: center;
+            }
+
+            #capture-btn {
+            }
+
+            #capture-btn img {
+                width: 38px;
+                height: 38px;
+            }
+
+            #capture-btn .capture-fallback {
+                font-size: 1.72rem;
+            }
+
+            #capture-delay-btn img {
+                width: 24px;
+                height: 24px;
+            }
+
+            #capture-delay-btn .delay-badge {
+                min-width: 24px;
+                padding: 3px 6px;
+                font-size: 0.56rem;
+            }
+
+            #capture-delay-menu {
+                min-width: 180px;
+                right: calc(var(--capture-side-offset) + var(--capture-delay-btn-size) + 10px);
+                padding: 8px;
+            }
+
+            .capture-delay-option {
+                padding: 9px 10px;
+                font-size: 0.74rem;
+            }
+
+            #save-toast {
+                max-width: calc(100vw - 120px);
+                text-align: center;
+            }
+
+            #history-drawer {
+                width: 100vw;
+            }
+
+            .drawer-content {
+                grid-template-columns: minmax(0, 1fr) minmax(230px, 0.82fr);
+            }
+
+            #mode-menu {
+                min-width: min(280px, calc(100vw - 24px));
+                left: 12px;
+                right: 12px;
+            }
+
+            #editor-overlay {
+                padding: 14px;
+            }
+
+            .editor-body {
+                grid-template-columns: 1fr;
+            }
+
+            .editor-stage-wrap {
+                min-height: 36vh;
+            }
+        }
+
+        @media (max-width: 640px) {
+            #capture-delay-menu {
+                min-width: 166px;
+            }
+
+            #capture-countdown {
+                width: min(132px, calc(100vw - 28px));
+            }
+
+            .gesture-card {
+                flex: 1 1 100%;
+            }
+
+            .drawer-content {
+                grid-template-columns: 1fr;
+            }
+
+            #history-empty,
+            #history-list,
+            #history-preview {
+                grid-column: auto;
+                grid-row: auto;
+            }
+
+            #history-preview {
+                position: static;
+            }
+
+            #history-list {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .editor-option-row,
+            .editor-photo-picker,
+            .editor-action-row {
+                grid-template-columns: 1fr;
+            }
+
+            .sticker-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div id="loading">
+    <div class="spinner"></div>
+    <h2>Khởi động nhận diện tay...</h2>
+</div>
+
+<div id="error-screen">
+    <div class="icon">📷</div>
+    <h2>Không thể truy cập Camera</h2>
+    <p>Vui lòng cho phép truy cập camera trong cài đặt trình duyệt rồi tải lại trang.</p>
+</div>
+
+<button id="menu-btn" type="button" aria-label="Mo menu che do">
+    <span></span>
+    <span></span>
+    <span></span>
+</button>
+
+<div id="mode-menu" aria-hidden="true">
+    <div class="menu-title">Danh sách chế độ</div>
+    <button class="menu-item" id="history-mode-btn" type="button">
+        <strong>Lịch sử ảnh chụp</strong>
+        <small>Xem 10 ảnh gần nhất, chọn lại ảnh cần chỉnh sửa ở bước tiếp theo.</small>
+    </button>
+    <button class="menu-item" id="photobook-mode-btn" type="button">
+        <strong>Khung ảnh Photobook</strong>
+        <small>Hiện đang trong quá trình nghiên cứu.</small>
+    </button>
+</div>
+
+<div id="overlay-backdrop" aria-hidden="true"></div>
+
+<aside id="history-drawer" aria-hidden="true">
+    <div class="drawer-header">
+        <div>
+            <h3>Lịch sử ảnh chụp</h3>
+            <p>Tự lưu 10 ảnh gần nhất mỗi khi bạn chụp hoặc lưu ảnh.</p>
+        </div>
+        <button class="drawer-close" id="history-close-btn" type="button" aria-label="Dong lich su">✕</button>
+    </div>
+    <div class="drawer-content">
+        <div id="history-empty">Chưa có ảnh nào trong lịch sử. Hãy chụp một tấm ảnh trước, ảnh sẽ tự xuất hiện ở đây.</div>
+        <div id="history-preview">
+            <img id="history-preview-image" alt="Anh lich su da chon">
+            <div class="history-preview-meta">
+                <strong id="history-preview-title">Ảnh gần đây</strong>
+                <span id="history-preview-time"></span>
+                <div id="history-selection-count" class="history-selection-count"></div>
+                <div class="history-actions">
+                    <button class="history-action primary" id="history-download-btn" type="button">Tải xuống</button>
+                    <button class="history-action secondary" id="history-edit-btn" type="button">Mở chỉnh sửa</button>
+                    <button class="history-action secondary" id="history-clear-selection-btn" type="button">Bỏ chọn ảnh ghép</button>
+                </div>
+                <div class="history-note">Bấm vào thumbnail để xem ảnh. Bấm nút dấu cộng hoặc dấu tích trên từng ô để chọn tối đa 4 ảnh ghép trước khi mở editor.</div>
+            </div>
+        </div>
+        <div id="history-list"></div>
+    </div>
+</aside>
+
+<div id="research-modal" aria-hidden="true">
+    <div class="research-card">
+        <h3>Khung ảnh Photobook</h3>
+        <p>Hiện đang trong quá trình nghiên cứu. Ở bước sau tôi sẽ nối phần chọn khung PNG trong thư mục <code>khungphotobook</code> và luồng chụp nhiều tấm.</p>
+        <button id="research-close-btn" type="button">Đóng</button>
+    </div>
+</div>
+
+<section id="editor-overlay" aria-hidden="true">
+    <div class="editor-shell">
+        <div class="editor-topbar">
+            <div>
+                <h3>Chỉnh sửa ảnh đã chọn</h3>
+                <p>Ghép ảnh, chọn khung, thêm sticker và tải PNG ở đúng kích thước xuất ảnh.</p>
+            </div>
+            <div class="editor-top-actions">
+                <button id="editor-download-btn" type="button">Lưu ảnh</button>
+                <button id="editor-close-btn" type="button" aria-label="Dong man hinh chinh sua">✕</button>
+            </div>
+        </div>
+        <div class="editor-body">
+            <div class="editor-stage-wrap">
+                <canvas id="editor-canvas" width="1080" height="1350"></canvas>
+            </div>
+            <div class="editor-panel">
+                <div class="editor-section">
+                    <h4>Ghép ảnh</h4>
+                    <div id="editor-layout-options" class="editor-option-row"></div>
+                    <div class="editor-helper">Chọn tối đa 4 ảnh từ lịch sử, sau đó đổi bố cục ngang, dọc hoặc lưới.</div>
+                    <div id="editor-photo-picker" class="editor-photo-picker"></div>
+                </div>
+
+                <div class="editor-section">
+                    <h4>Khung ảnh</h4>
+                    <div id="editor-frame-options" class="editor-option-row"></div>
+                </div>
+
+                <div class="editor-section">
+                    <h4>Sticker</h4>
+                    <input id="sticker-search-input" class="editor-search" type="search" placeholder="Tìm sticker theo tên...">
+                    <div id="sticker-list" class="sticker-grid"></div>
+                </div>
+
+                <div class="editor-section">
+                    <h4>Sticker đang chọn</h4>
+                    <label class="editor-control">
+                        <span>Phóng to / thu nhỏ</span>
+                        <input id="sticker-scale-range" type="range" min="40" max="220" step="1" value="100">
+                    </label>
+                    <label class="editor-control">
+                        <span>Góc xoay</span>
+                        <input id="sticker-rotation-range" type="range" min="-180" max="180" step="1" value="0">
+                    </label>
+                    <label class="editor-control">
+                        <span class="editor-control-head">
+                            <span>Bán kính gôm</span>
+                            <strong id="sticker-eraser-size-value" class="editor-inline-value">24 px</strong>
+                        </span>
+                        <input id="sticker-eraser-range" type="range" min="8" max="72" step="1" value="24">
+                    </label>
+                    <div class="editor-action-row compact">
+                        <button id="sticker-eraser-toggle-btn" class="editor-action-btn" type="button">Bật gôm</button>
+                        <button id="sticker-flip-x-btn" class="editor-action-btn" type="button">Lật ngang</button>
+                        <button id="sticker-flip-y-btn" class="editor-action-btn" type="button">Lật dọc</button>
+                        <button id="sticker-remove-btn" class="editor-action-btn danger" type="button">Xóa</button>
+                    </div>
+                    <div id="editor-selection-note" class="editor-empty">Chọn một sticker trong thư viện rồi kéo trực tiếp trên khung. Có thể dùng con lăn chuột để zoom nhanh sticker đang chọn.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="video-container">
+    <video class="input_video" autoplay playsinline></video>
+    <canvas class="output_canvas" width="1280" height="720"></canvas>
+</div>
+
+<div id="hud">
+    <div class="gesture-card">
+        <span class="emoji">🖖</span>
+        <span class="label"><b>Tam giác</b>1 tay: cái + trỏ + giữa</span>
+    </div>
+    <div class="gesture-card">
+        <span class="emoji">✌️</span>
+        <span class="label"><b>Peace</b>1 tay → Ngôi sao</span>
+    </div>
+    <div class="gesture-card">
+        <span class="emoji">🖐️</span>
+        <span class="label"><b>Open palm</b>1 tay → Vòng tròn lớn</span>
+    </div>
+    <div class="gesture-card">
+        <span class="emoji">👆</span>
+        <span class="label"><b>L-Frame</b>2 tay → Tứ giác 3D</span>
+    </div>
+    <div class="gesture-card">
+        <span class="emoji">🤙</span>
+        <span class="label"><b>Vòng tròn</b>2 tay: cái + trỏ + út, kéo dãn</span>
+    </div>
+</div>
+
+<div id="gesture-tag"></div>
+<div id="save-toast">✓ Đã lưu ảnh!</div>
+<button id="capture-btn" type="button" aria-label="Chup va luu anh">
+    <img src="camerabutton.png" alt="">
+    <span class="capture-fallback" aria-hidden="true">📷</span>
+</button>
+<button id="capture-delay-btn" type="button" aria-label="Hen gio chup" aria-haspopup="true" aria-expanded="false">
+    <img src="thoigian.png" alt="">
+    <span class="capture-delay-fallback" aria-hidden="true">⏱</span>
+    <span id="capture-delay-value" class="delay-badge">0s</span>
+</button>
+<div id="capture-delay-menu" aria-hidden="true">
+    <button class="capture-delay-option active" type="button" data-capture-delay="0">Ngay</button>
+    <button class="capture-delay-option" type="button" data-capture-delay="3">3 giây</button>
+    <button class="capture-delay-option" type="button" data-capture-delay="5">5 giây</button>
+    <button class="capture-delay-option" type="button" data-capture-delay="10">10 giây</button>
+</div>
+<div id="capture-countdown" aria-live="assertive" aria-atomic="true">
+    <strong id="capture-countdown-value">3</strong>
+    <small id="capture-countdown-label">Chuẩn bị chụp</small>
+</div>
+<div id="clear-hint">Nhấn màn hình để xóa<br>Nút camera bên phải hoặc [Space] để chụp & lưu<br>Nút đồng hồ phía dưới để hẹn giờ 3s / 5s / 10s</div>
+
+<script>
+    const videoEl      = document.querySelector('.input_video');
+    const canvasEl     = document.querySelector('.output_canvas');
+    const ctx          = canvasEl.getContext('2d');
+    const loadingEl    = document.getElementById('loading');
+    const errorEl      = document.getElementById('error-screen');
+    const hudEl        = document.getElementById('hud');
+    const gestureTagEl = document.getElementById('gesture-tag');
+    const saveToastEl  = document.getElementById('save-toast');
+    const captureBtnEl = document.getElementById('capture-btn');
+    const captureBtnImgEl = captureBtnEl.querySelector('img');
+    const captureDelayBtnEl = document.getElementById('capture-delay-btn');
+    const captureDelayBtnImgEl = captureDelayBtnEl.querySelector('img');
+    const captureDelayValueEl = document.getElementById('capture-delay-value');
+    const captureDelayMenuEl = document.getElementById('capture-delay-menu');
+    const captureCountdownEl = document.getElementById('capture-countdown');
+    const captureCountdownValueEl = document.getElementById('capture-countdown-value');
+    const captureCountdownLabelEl = document.getElementById('capture-countdown-label');
+    const menuBtnEl    = document.getElementById('menu-btn');
+    const modeMenuEl   = document.getElementById('mode-menu');
+    const historyModeBtnEl = document.getElementById('history-mode-btn');
+    const photobookModeBtnEl = document.getElementById('photobook-mode-btn');
+    const overlayBackdropEl = document.getElementById('overlay-backdrop');
+    const historyDrawerEl = document.getElementById('history-drawer');
+    const historyCloseBtnEl = document.getElementById('history-close-btn');
+    const historyEmptyEl = document.getElementById('history-empty');
+    const historyListEl = document.getElementById('history-list');
+    const historyPreviewEl = document.getElementById('history-preview');
+    const historyPreviewImageEl = document.getElementById('history-preview-image');
+    const historyPreviewTitleEl = document.getElementById('history-preview-title');
+    const historyPreviewTimeEl = document.getElementById('history-preview-time');
+    const historySelectionCountEl = document.getElementById('history-selection-count');
+    const historyDownloadBtnEl = document.getElementById('history-download-btn');
+    const historyEditBtnEl = document.getElementById('history-edit-btn');
+    const historyClearSelectionBtnEl = document.getElementById('history-clear-selection-btn');
+    const researchModalEl = document.getElementById('research-modal');
+    const researchCloseBtnEl = document.getElementById('research-close-btn');
+    const editorOverlayEl = document.getElementById('editor-overlay');
+    const editorCanvasEl = document.getElementById('editor-canvas');
+    const editorCtx = editorCanvasEl.getContext('2d');
+    const editorDownloadBtnEl = document.getElementById('editor-download-btn');
+    const editorCloseBtnEl = document.getElementById('editor-close-btn');
+    const editorLayoutOptionsEl = document.getElementById('editor-layout-options');
+    const editorPhotoPickerEl = document.getElementById('editor-photo-picker');
+    const editorFrameOptionsEl = document.getElementById('editor-frame-options');
+    const stickerSearchInputEl = document.getElementById('sticker-search-input');
+    const stickerListEl = document.getElementById('sticker-list');
+    const stickerScaleRangeEl = document.getElementById('sticker-scale-range');
+    const stickerRotationRangeEl = document.getElementById('sticker-rotation-range');
+    const stickerEraserRangeEl = document.getElementById('sticker-eraser-range');
+    const stickerEraserSizeValueEl = document.getElementById('sticker-eraser-size-value');
+    const stickerEraserToggleBtnEl = document.getElementById('sticker-eraser-toggle-btn');
+    const stickerFlipXBtnEl = document.getElementById('sticker-flip-x-btn');
+    const stickerFlipYBtnEl = document.getElementById('sticker-flip-y-btn');
+    const stickerRemoveBtnEl = document.getElementById('sticker-remove-btn');
+    const editorSelectionNoteEl = document.getElementById('editor-selection-note');
+
+    const frozenCanvas = document.createElement('canvas');
+    const frozenCtx    = frozenCanvas.getContext('2d');
+    const editorExportCanvas = document.createElement('canvas');
+    editorExportCanvas.width = editorCanvasEl.width;
+    editorExportCanvas.height = editorCanvasEl.height;
+    const editorExportCtx = editorExportCanvas.getContext('2d');
+
+    let frozenGlass  = null;
+    let activeGlass  = null;
+    let snapTimer    = 0;
+    let lastPos      = null;
+    let isCooldown   = false;
+    let flashFrames  = 0;
+    let lastGesture  = null;
+    let currentMode = 'glasses';
+    let capturedPhotos = [];
+    let selectedHistoryPhotoId = null;
+    let selectedHistoryPhotoIds = [];
+    let selectedCaptureDelay = 0;
+    let captureCountdownTimeout = null;
+    let captureCountdownInterval = null;
+    let captureCountdownEndsAt = 0;
+    let captureCountdownLastValue = 0;
+    const imageCache = new Map();
+    const COLLAGE_LAYOUTS = [
+        { id: 'single', label: '1 ảnh', hint: 'Toàn khung' },
+        { id: 'split-v', label: 'Ngang 2', hint: 'Trái / phải' },
+        { id: 'split-h', label: 'Dọc 2', hint: 'Trên / dưới' },
+        { id: 'grid', label: 'Lưới 4', hint: 'Ghép nhiều ảnh' }
+    ];
+    const FRAME_STYLES = [
+        { id: 'none', label: 'Tối giản', hint: 'Không viền' },
+        { id: 'classic', label: 'Classic', hint: 'Khung trắng' },
+        { id: 'polaroid', label: 'Polaroid', hint: 'Mé dưới dày' },
+        { id: 'neon', label: 'Neon', hint: 'Phát sáng' },
+        { id: 'film', label: 'Film', hint: 'Dải phim' }
+    ];
+    const STICKER_LIBRARY = [
+        '3d-glasses.png','angry.png','axolotl (1).png','axolotl (2).png','axolotl.png','beanie.png',
+        'chef-hat.png','cherry-pie.png','cigarette.png','corgi.png','fire.png','frog (1).png','frog.png',
+        'glasses.png','handcuff.png','happy.png','heart-glasses.png','hello.png','hipster.png',
+        'necklace (1).png','necklace (2).png','necklace.png','paper-plane.png','party-hat.png','pendant.png',
+        'proud.png','rainbow.png','read.png','relaxed.png','rose.png','sad.png','santa-hat.png',
+        'smile.png','smoke.png','studying.png','sun.png','tired.png'
+    ].map((name, index) => ({
+        id: `sticker-def-${index}`,
+        name,
+        label: name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+        src: `sticker/${encodeURIComponent(name)}`
+    }));
+    const editorState = {
+        isOpen: false,
+        selectedPhotoIds: [],
+        collageLayout: 'single',
+        frameStyle: 'classic',
+        activeStickers: [],
+        selectedStickerId: null,
+        stickerSearch: '',
+        dragStickerId: null,
+        dragOffsetX: 0,
+        dragOffsetY: 0,
+        eraserEnabled: false,
+        eraserRadius: 24,
+        erasingStickerId: null,
+        eraseLastPoint: null,
+        eraserCursorVisible: false,
+        eraserCursorX: 0,
+        eraserCursorY: 0,
+        renderToken: 0
+    };
+
+    const SNAP_DELAY          = 2000;
+    const STABILITY_THRESHOLD = 80;
+    const MAX_CAPTURE_HISTORY = 10;
+    const DEFAULT_SAVE_TOAST = saveToastEl.textContent;
+
+    function getPreferredCameraResolution() {
+        const viewportWidth = window.innerWidth || screen.width || 1280;
+        const viewportHeight = window.innerHeight || screen.height || 720;
+        const smallerSide = Math.min(viewportWidth, viewportHeight);
+        const lowPowerCpu = Number(navigator.hardwareConcurrency || 8) <= 4;
+        const lowMemoryDevice = Number(navigator.deviceMemory || 8) <= 4;
+
+        if (smallerSide < 720 || lowPowerCpu || lowMemoryDevice) {
+            return { width: 640, height: 480 };
+        }
+
+        return { width: 1280, height: 720 };
+    }
+
+    function setCaptureButtonFallback(isFallbackVisible) {
+        captureBtnEl.classList.toggle('fallback-visible', isFallbackVisible);
+    }
+
+    function setCaptureDelayButtonFallback(isFallbackVisible) {
+        captureDelayBtnEl.classList.toggle('fallback-visible', isFallbackVisible);
+    }
+
+    if (captureBtnImgEl) {
+        captureBtnImgEl.addEventListener('load', () => setCaptureButtonFallback(false));
+        captureBtnImgEl.addEventListener('error', () => setCaptureButtonFallback(true));
+
+        if (captureBtnImgEl.complete) {
+            setCaptureButtonFallback(!(captureBtnImgEl.naturalWidth > 0));
+        }
+    }
+
+    if (captureDelayBtnImgEl) {
+        captureDelayBtnImgEl.addEventListener('load', () => setCaptureDelayButtonFallback(false));
+        captureDelayBtnImgEl.addEventListener('error', () => setCaptureDelayButtonFallback(true));
+
+        if (captureDelayBtnImgEl.complete) {
+            setCaptureDelayButtonFallback(!(captureDelayBtnImgEl.naturalWidth > 0));
+        }
+    }
+
+    function showToast(message = DEFAULT_SAVE_TOAST, duration = 2200) {
+        saveToastEl.textContent = message;
+        saveToastEl.classList.add('visible');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+            saveToastEl.classList.remove('visible');
+            saveToastEl.textContent = DEFAULT_SAVE_TOAST;
+        }, duration);
+    }
+
+    function formatCaptureTime(timestamp) {
+        return new Intl.DateTimeFormat('vi-VN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            day: '2-digit',
+            month: '2-digit'
+        }).format(timestamp);
+    }
+
+    function getSelectedHistoryPhoto() {
+        return capturedPhotos.find(photo => photo.id === selectedHistoryPhotoId) || null;
+    }
+
+    function getHistorySelectedPhotos() {
+        return selectedHistoryPhotoIds
+            .map(photoId => capturedPhotos.find(photo => photo.id === photoId))
+            .filter(Boolean);
+    }
+
+    function getHistoryPhotosForEditor() {
+        const selected = getHistorySelectedPhotos();
+        if (selected.length) return selected;
+        const focused = getSelectedHistoryPhoto();
+        return focused ? [focused] : [];
+    }
+
+    function downloadDataUrl(dataUrl, filename) {
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = dataUrl;
+        link.click();
+    }
+
+    function formatCaptureDelayBadge(delaySeconds) {
+        return `${delaySeconds}s`;
+    }
+
+    function formatCaptureDelayToast(delaySeconds) {
+        return delaySeconds > 0 ? `⏱ Hẹn giờ ${delaySeconds} giây` : '⚡ Chụp ngay';
+    }
+
+    function renderCaptureDelayOptions() {
+        captureDelayValueEl.textContent = formatCaptureDelayBadge(selectedCaptureDelay);
+        captureDelayMenuEl.querySelectorAll('[data-capture-delay]').forEach(button => {
+            const isActive = Number(button.dataset.captureDelay) === selectedCaptureDelay;
+            button.classList.toggle('active', isActive);
+            button.setAttribute('aria-pressed', String(isActive));
+        });
+    }
+
+    function toggleCaptureDelayMenu(force) {
+        const shouldOpen = typeof force === 'boolean'
+            ? force
+            : !captureDelayMenuEl.classList.contains('visible');
+        captureDelayMenuEl.classList.toggle('visible', shouldOpen);
+        captureDelayMenuEl.setAttribute('aria-hidden', String(!shouldOpen));
+        captureDelayBtnEl.setAttribute('aria-expanded', String(shouldOpen));
+    }
+
+    function renderCaptureCountdownValue() {
+        if (!captureCountdownEndsAt) return;
+        const remainingMs = Math.max(0, captureCountdownEndsAt - Date.now());
+        const secondsLeft = Math.max(1, Math.ceil(remainingMs / 1000));
+        if (secondsLeft === captureCountdownLastValue) return;
+        captureCountdownLastValue = secondsLeft;
+        captureCountdownValueEl.textContent = secondsLeft;
+    }
+
+    function stopCaptureCountdown(options = {}) {
+        const { notifyCancel = false } = options;
+        const hadCountdown = !!captureCountdownEndsAt;
+        clearTimeout(captureCountdownTimeout);
+        clearInterval(captureCountdownInterval);
+        captureCountdownTimeout = null;
+        captureCountdownInterval = null;
+        captureCountdownEndsAt = 0;
+        captureCountdownLastValue = 0;
+        captureCountdownEl.classList.remove('visible');
+        captureBtnEl.classList.remove('countdown-active');
+        captureDelayBtnEl.classList.remove('countdown-active');
+
+        if (notifyCancel && hadCountdown) {
+            showToast('Đã hủy hẹn giờ', 1600);
+        }
+    }
+
+    function startCaptureFlow() {
+        toggleCaptureDelayMenu(false);
+
+        if (captureCountdownEndsAt) {
+            stopCaptureCountdown({ notifyCancel: true });
+            return;
+        }
+
+        if (!selectedCaptureDelay) {
+            saveCurrentFrame();
+            return;
+        }
+
+        captureCountdownEndsAt = Date.now() + selectedCaptureDelay * 1000;
+        captureCountdownLabelEl.textContent = 'Chuẩn bị chụp';
+        captureCountdownEl.classList.add('visible');
+        captureBtnEl.classList.add('countdown-active');
+        captureDelayBtnEl.classList.add('countdown-active');
+        renderCaptureCountdownValue();
+
+        captureCountdownInterval = setInterval(renderCaptureCountdownValue, 120);
+        captureCountdownTimeout = setTimeout(() => {
+            stopCaptureCountdown();
+            saveCurrentFrame();
+        }, selectedCaptureDelay * 1000);
+    }
+
+    function updateOverlayBackdrop() {
+        const visible =
+            modeMenuEl.classList.contains('visible') ||
+            historyDrawerEl.classList.contains('visible') ||
+            researchModalEl.classList.contains('visible');
+
+        overlayBackdropEl.classList.toggle('visible', visible);
+    }
+
+    function toggleModeMenu(force) {
+        const shouldOpen = typeof force === 'boolean' ? force : !modeMenuEl.classList.contains('visible');
+        modeMenuEl.classList.toggle('visible', shouldOpen);
+        modeMenuEl.setAttribute('aria-hidden', String(!shouldOpen));
+        updateOverlayBackdrop();
+    }
+
+    function closeResearchModal() {
+        researchModalEl.classList.remove('visible');
+        researchModalEl.setAttribute('aria-hidden', 'true');
+        if (!historyDrawerEl.classList.contains('visible')) currentMode = 'glasses';
+        updateOverlayBackdrop();
+    }
+
+    function openResearchModal() {
+        currentMode = 'photobook';
+        toggleModeMenu(false);
+        researchModalEl.classList.add('visible');
+        researchModalEl.setAttribute('aria-hidden', 'false');
+        updateOverlayBackdrop();
+    }
+
+    function toggleHistoryPhotoSelection(photoId) {
+        const exists = selectedHistoryPhotoIds.includes(photoId);
+
+        if (exists) {
+            selectedHistoryPhotoIds = selectedHistoryPhotoIds.filter(id => id !== photoId);
+        } else {
+            if (selectedHistoryPhotoIds.length >= 4) {
+                showToast('Chỉ chọn tối đa 4 ảnh để ghép.', 2200);
+                return;
+            }
+            selectedHistoryPhotoIds = [...selectedHistoryPhotoIds, photoId];
+        }
+
+        selectedHistoryPhotoId = photoId;
+        renderHistoryDrawer();
+    }
+
+    function clearHistoryPhotoSelection() {
+        selectedHistoryPhotoIds = [];
+        renderHistoryDrawer();
+    }
+
+    function renderHistoryDrawer() {
+        const hasPhotos = capturedPhotos.length > 0;
+        historyEmptyEl.style.display = hasPhotos ? 'none' : 'block';
+        historyListEl.innerHTML = '';
+
+        if (!hasPhotos) {
+            selectedHistoryPhotoId = null;
+            selectedHistoryPhotoIds = [];
+            historyPreviewEl.classList.remove('visible');
+            return;
+        }
+
+        if (!getSelectedHistoryPhoto()) {
+            selectedHistoryPhotoId = capturedPhotos[0].id;
+        }
+
+        selectedHistoryPhotoIds = selectedHistoryPhotoIds
+            .filter(photoId => capturedPhotos.some(photo => photo.id === photoId))
+            .slice(0, 4);
+
+        for (const photo of capturedPhotos) {
+            const item = document.createElement('button');
+            item.type = 'button';
+            const isFocused = photo.id === selectedHistoryPhotoId;
+            const isSelected = selectedHistoryPhotoIds.includes(photo.id);
+            item.className = `history-item${isFocused ? ' focused' : ''}${isSelected ? ' selected' : ''}`;
+            item.dataset.photoId = photo.id;
+            item.innerHTML = `
+                <span class="history-item-toggle" data-toggle-photo-id="${photo.id}" aria-label="${isSelected ? 'Bo chon anh' : 'Chon anh de ghep'}">${isSelected ? '✓' : '+'}</span>
+                <img src="${photo.dataUrl}" alt="${photo.label}">
+                <div class="history-item-meta">
+                    <strong>${photo.label}</strong>
+                    <span>${formatCaptureTime(photo.createdAt)}</span>
+                </div>
+            `;
+            historyListEl.appendChild(item);
+        }
+
+        const selected = getSelectedHistoryPhoto();
+        historyPreviewEl.classList.toggle('visible', !!selected);
+        if (!selected) return;
+
+        historyPreviewImageEl.src = selected.dataUrl;
+        historyPreviewTitleEl.textContent = selected.label;
+        historyPreviewTimeEl.textContent = `Đã lưu lúc ${formatCaptureTime(selected.createdAt)}`;
+        if (selectedHistoryPhotoIds.length) {
+            historySelectionCountEl.textContent = `Đã chọn ${selectedHistoryPhotoIds.length}/4 ảnh để ghép trong editor.`;
+        } else {
+            historySelectionCountEl.textContent = 'Chưa chọn ảnh ghép. Nếu mở editor ngay, hệ thống sẽ dùng ảnh đang xem.';
+        }
+        const editorPhotos = getHistoryPhotosForEditor();
+        historyEditBtnEl.textContent = editorPhotos.length > 1
+            ? `Mở chỉnh sửa (${editorPhotos.length} ảnh)`
+            : 'Mở chỉnh sửa';
+        historyClearSelectionBtnEl.disabled = selectedHistoryPhotoIds.length === 0;
+    }
+
+    function openHistoryDrawer() {
+        currentMode = 'history';
+        toggleModeMenu(false);
+        historyDrawerEl.classList.add('visible');
+        historyDrawerEl.setAttribute('aria-hidden', 'false');
+        renderHistoryDrawer();
+        updateOverlayBackdrop();
+    }
+
+    function closeHistoryDrawer() {
+        historyDrawerEl.classList.remove('visible');
+        historyDrawerEl.setAttribute('aria-hidden', 'true');
+        if (!researchModalEl.classList.contains('visible')) currentMode = 'glasses';
+        updateOverlayBackdrop();
+    }
+
+    function pushCapturedPhoto(dataUrl) {
+        const entry = {
+            id: `photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            dataUrl,
+            createdAt: Date.now(),
+            label: `Ảnh ${capturedPhotos.length + 1}`
+        };
+
+        capturedPhotos.unshift(entry);
+        if (capturedPhotos.length > MAX_CAPTURE_HISTORY) {
+            capturedPhotos = capturedPhotos.slice(0, MAX_CAPTURE_HISTORY);
+        }
+        selectedHistoryPhotoId = entry.id;
+        selectedHistoryPhotoIds = [entry.id];
+        renderHistoryDrawer();
+    }
+
+    function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    function loadImageCached(src) {
+        if (imageCache.has(src)) return imageCache.get(src);
+
+        const imagePromise = new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = src;
+        });
+
+        imageCache.set(src, imagePromise);
+        return imagePromise;
+    }
+
+    function getEditorSelectedSticker() {
+        return editorState.activeStickers.find(sticker => sticker.id === editorState.selectedStickerId) || null;
+    }
+
+    function createStickerRenderSurface(img, width, height) {
+        const renderCanvas = document.createElement('canvas');
+        renderCanvas.width = Math.max(1, Math.round(width));
+        renderCanvas.height = Math.max(1, Math.round(height));
+        const renderCtx = renderCanvas.getContext('2d', { willReadFrequently: true });
+        renderCtx.clearRect(0, 0, renderCanvas.width, renderCanvas.height);
+        renderCtx.drawImage(img, 0, 0, renderCanvas.width, renderCanvas.height);
+        return { renderCanvas, renderCtx };
+    }
+
+    function getStickerCanvasCoordinates(sticker, stageX, stageY) {
+        const dx = stageX - sticker.x;
+        const dy = stageY - sticker.y;
+        const cos = Math.cos(-sticker.rotation);
+        const sin = Math.sin(-sticker.rotation);
+        const rotatedX = dx * cos - dy * sin;
+        const rotatedY = dx * sin + dy * cos;
+        const scaledX = rotatedX / (sticker.scale * sticker.flipX);
+        const scaledY = rotatedY / (sticker.scale * sticker.flipY);
+        const canvasX = scaledX + sticker.width / 2;
+        const canvasY = scaledY + sticker.height / 2;
+        return {
+            canvasX,
+            canvasY,
+            inside: canvasX >= 0 && canvasX <= sticker.width && canvasY >= 0 && canvasY <= sticker.height
+        };
+    }
+
+    function isStickerPixelVisible(sticker, canvasX, canvasY) {
+        if (!sticker.renderCtx || !sticker.renderCanvas) return true;
+        const px = Math.max(0, Math.min(sticker.renderCanvas.width - 1, Math.floor(canvasX)));
+        const py = Math.max(0, Math.min(sticker.renderCanvas.height - 1, Math.floor(canvasY)));
+        return sticker.renderCtx.getImageData(px, py, 1, 1).data[3] > 8;
+    }
+
+    function eraseStickerStroke(sticker, fromStagePoint, toStagePoint) {
+        if (!sticker?.renderCtx) return;
+        const from = getStickerCanvasCoordinates(sticker, fromStagePoint.x, fromStagePoint.y);
+        const to = getStickerCanvasCoordinates(sticker, toStagePoint.x, toStagePoint.y);
+        const brushRadius = editorState.eraserRadius / Math.max(0.01, sticker.scale);
+
+        sticker.renderCtx.save();
+        sticker.renderCtx.globalCompositeOperation = 'destination-out';
+        sticker.renderCtx.lineCap = 'round';
+        sticker.renderCtx.lineJoin = 'round';
+        sticker.renderCtx.lineWidth = brushRadius * 2;
+        sticker.renderCtx.beginPath();
+        sticker.renderCtx.moveTo(from.canvasX, from.canvasY);
+        sticker.renderCtx.lineTo(to.canvasX, to.canvasY);
+        sticker.renderCtx.stroke();
+        sticker.renderCtx.beginPath();
+        sticker.renderCtx.arc(to.canvasX, to.canvasY, brushRadius, 0, Math.PI * 2);
+        sticker.renderCtx.fill();
+        sticker.renderCtx.restore();
+    }
+
+    function updateEraserCursor(point) {
+        if (!editorState.eraserEnabled || !point) {
+            editorState.eraserCursorVisible = false;
+            return;
+        }
+
+        editorState.eraserCursorVisible = true;
+        editorState.eraserCursorX = point.x;
+        editorState.eraserCursorY = point.y;
+    }
+
+    function drawEraserCursor(targetCtx) {
+        if (!editorState.eraserEnabled || !editorState.eraserCursorVisible) return;
+
+        targetCtx.save();
+        targetCtx.beginPath();
+        targetCtx.arc(editorState.eraserCursorX, editorState.eraserCursorY, editorState.eraserRadius, 0, Math.PI * 2);
+        targetCtx.fillStyle = 'rgba(255,255,255,0.12)';
+        targetCtx.fill();
+        targetCtx.lineWidth = 2;
+        targetCtx.strokeStyle = 'rgba(255,255,255,0.98)';
+        targetCtx.shadowColor = 'rgba(15,23,42,0.35)';
+        targetCtx.shadowBlur = 6;
+        targetCtx.stroke();
+        targetCtx.beginPath();
+        targetCtx.arc(editorState.eraserCursorX, editorState.eraserCursorY, 2.5, 0, Math.PI * 2);
+        targetCtx.fillStyle = 'rgba(34,197,94,0.96)';
+        targetCtx.fill();
+        targetCtx.restore();
+    }
+
+    function getEditorSelectedPhotos() {
+        return editorState.selectedPhotoIds
+            .map(photoId => capturedPhotos.find(photo => photo.id === photoId))
+            .filter(Boolean);
+    }
+
+    function syncStickerControls() {
+        const sticker = getEditorSelectedSticker();
+        const disabled = !sticker;
+
+        if (!sticker) {
+            editorState.eraserEnabled = false;
+            editorState.erasingStickerId = null;
+            editorState.eraseLastPoint = null;
+            editorState.eraserCursorVisible = false;
+        }
+
+        stickerScaleRangeEl.disabled = disabled;
+        stickerRotationRangeEl.disabled = disabled;
+        stickerEraserRangeEl.disabled = disabled || !editorState.eraserEnabled;
+        stickerEraserToggleBtnEl.disabled = disabled;
+        stickerFlipXBtnEl.disabled = disabled;
+        stickerFlipYBtnEl.disabled = disabled;
+        stickerRemoveBtnEl.disabled = disabled;
+        stickerEraserToggleBtnEl.classList.toggle('active', !!sticker && editorState.eraserEnabled);
+        stickerEraserToggleBtnEl.textContent = editorState.eraserEnabled ? 'Tắt gôm' : 'Bật gôm';
+        stickerEraserRangeEl.value = String(editorState.eraserRadius);
+        stickerEraserSizeValueEl.textContent = `${editorState.eraserRadius} px`;
+        editorCanvasEl.classList.toggle('eraser-active', !!sticker && editorState.eraserEnabled);
+
+        if (!sticker) {
+            stickerScaleRangeEl.value = '100';
+            stickerRotationRangeEl.value = '0';
+            editorSelectionNoteEl.textContent = 'Chọn một sticker trong thư viện rồi kéo trực tiếp trên khung. Khi cần, bật gôm tự do để xóa bớt từng phần trên sticker.';
+            return;
+        }
+
+        stickerScaleRangeEl.value = String(Math.round(sticker.scale * 100));
+        stickerRotationRangeEl.value = String(Math.round(sticker.rotation * 180 / Math.PI));
+        editorSelectionNoteEl.textContent = editorState.eraserEnabled
+            ? `Gôm đang bật cho ${sticker.label}. Kéo trực tiếp trên sticker để xóa tự do, dùng thanh bán kính để chỉnh đầu gôm.`
+            : `Đang chọn: ${sticker.label}. Kéo để di chuyển, cuộn để zoom, Shift + cuộn để xoay nhanh.`;
+    }
+
+    function renderEditorLayoutOptions() {
+        editorLayoutOptionsEl.innerHTML = COLLAGE_LAYOUTS.map(layout => `
+            <button class="editor-option${layout.id === editorState.collageLayout ? ' selected' : ''}" type="button" data-layout-id="${layout.id}">
+                <strong>${layout.label}</strong>
+                <span>${layout.hint}</span>
+            </button>
+        `).join('');
+    }
+
+    function renderEditorFrameOptions() {
+        editorFrameOptionsEl.innerHTML = FRAME_STYLES.map(frame => `
+            <button class="editor-option${frame.id === editorState.frameStyle ? ' selected' : ''}" type="button" data-frame-id="${frame.id}">
+                <strong>${frame.label}</strong>
+                <span>${frame.hint}</span>
+            </button>
+        `).join('');
+    }
+
+    function renderEditorPhotoPicker() {
+        if (!capturedPhotos.length) {
+            editorPhotoPickerEl.innerHTML = '<div class="editor-empty">Chưa có ảnh nào để ghép.</div>';
+            return;
+        }
+
+        editorPhotoPickerEl.innerHTML = capturedPhotos.map(photo => `
+            <button class="editor-photo-chip${editorState.selectedPhotoIds.includes(photo.id) ? ' selected' : ''}" type="button" data-photo-id="${photo.id}">
+                <img src="${photo.dataUrl}" alt="${photo.label}">
+                <div class="editor-photo-chip-meta">
+                    <strong>${photo.label}</strong>
+                    <span>${formatCaptureTime(photo.createdAt)}</span>
+                </div>
+            </button>
+        `).join('');
+    }
+
+    function renderStickerLibrary() {
+        const keyword = editorState.stickerSearch.trim().toLowerCase();
+        const filtered = STICKER_LIBRARY.filter(sticker => {
+            if (!keyword) return true;
+            return sticker.label.toLowerCase().includes(keyword) || sticker.name.toLowerCase().includes(keyword);
+        });
+
+        if (!filtered.length) {
+            stickerListEl.innerHTML = '<div class="editor-empty">Không tìm thấy sticker phù hợp.</div>';
+            return;
+        }
+
+        stickerListEl.innerHTML = filtered.map(sticker => `
+            <button class="sticker-item" type="button" data-sticker-id="${sticker.id}">
+                <img src="${sticker.src}" alt="${sticker.label}">
+                <span>${sticker.label}</span>
+            </button>
+        `).join('');
+    }
+
+    function renderEditorPanels() {
+        renderEditorLayoutOptions();
+        renderEditorFrameOptions();
+        renderEditorPhotoPicker();
+        renderStickerLibrary();
+        syncStickerControls();
+    }
+
+    function closeEditor() {
+        editorOverlayEl.classList.remove('visible');
+        editorOverlayEl.setAttribute('aria-hidden', 'true');
+        editorState.isOpen = false;
+        editorState.dragStickerId = null;
+        editorState.eraserEnabled = false;
+        editorState.erasingStickerId = null;
+        editorState.eraseLastPoint = null;
+        editorState.eraserCursorVisible = false;
+        editorCanvasEl.classList.remove('dragging');
+        editorCanvasEl.classList.remove('eraser-active');
+        currentMode = 'glasses';
+    }
+
+    function openEditorFromHistory() {
+        const editorPhotos = getHistoryPhotosForEditor();
+        if (!editorPhotos.length) {
+            showToast('Hãy chọn một ảnh trong lịch sử trước.', 2200);
+            return;
+        }
+
+        closeHistoryDrawer();
+        editorState.isOpen = true;
+        currentMode = 'editor';
+        editorState.selectedPhotoIds = editorPhotos.map(photo => photo.id);
+        editorState.collageLayout =
+            editorPhotos.length >= 3 ? 'grid' :
+            editorPhotos.length === 2 ? 'split-v' :
+            'single';
+        editorState.frameStyle = 'classic';
+        editorState.activeStickers = [];
+        editorState.selectedStickerId = null;
+        editorState.stickerSearch = '';
+        editorState.dragStickerId = null;
+        editorState.eraserEnabled = false;
+        editorState.erasingStickerId = null;
+        editorState.eraseLastPoint = null;
+        editorState.eraserCursorVisible = false;
+        stickerSearchInputEl.value = '';
+
+        editorOverlayEl.classList.add('visible');
+        editorOverlayEl.setAttribute('aria-hidden', 'false');
+        renderEditorPanels();
+        renderEditorCanvas();
+    }
+
+    function toggleEditorPhotoSelection(photoId) {
+        const exists = editorState.selectedPhotoIds.includes(photoId);
+
+        if (exists) {
+            if (editorState.selectedPhotoIds.length === 1) {
+                showToast('Editor cần giữ ít nhất 1 ảnh.', 2200);
+                return;
+            }
+            editorState.selectedPhotoIds = editorState.selectedPhotoIds.filter(id => id !== photoId);
+        } else {
+            if (editorState.selectedPhotoIds.length >= 4) {
+                showToast('Ghép ảnh tối đa 4 tấm ở bước này.', 2200);
+                return;
+            }
+            editorState.selectedPhotoIds = [...editorState.selectedPhotoIds, photoId];
+        }
+
+        renderEditorPhotoPicker();
+        renderEditorCanvas();
+    }
+
+    async function addStickerToEditor(stickerId) {
+        const definition = STICKER_LIBRARY.find(sticker => sticker.id === stickerId);
+        if (!definition) return;
+
+        const img = await loadImageCached(definition.src);
+        const longestSide = Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height);
+        const fitRatio = 190 / Math.max(1, longestSide);
+        const sticker = {
+            id: `active-sticker-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            label: definition.label,
+            src: definition.src,
+            width: Math.round((img.naturalWidth || img.width) * fitRatio),
+            height: Math.round((img.naturalHeight || img.height) * fitRatio),
+            x: editorCanvasEl.width / 2,
+            y: editorCanvasEl.height / 2,
+            scale: 1,
+            rotation: 0,
+            flipX: 1,
+            flipY: 1
+        };
+        const renderSurface = createStickerRenderSurface(img, sticker.width, sticker.height);
+        sticker.renderCanvas = renderSurface.renderCanvas;
+        sticker.renderCtx = renderSurface.renderCtx;
+
+        editorState.activeStickers.push(sticker);
+        editorState.selectedStickerId = sticker.id;
+        syncStickerControls();
+        renderEditorCanvas();
+    }
+
+    function getEditorCanvasPoint(event) {
+        const rect = editorCanvasEl.getBoundingClientRect();
+        return {
+            x: (event.clientX - rect.left) * (editorCanvasEl.width / rect.width),
+            y: (event.clientY - rect.top) * (editorCanvasEl.height / rect.height)
+        };
+    }
+
+    function findStickerAtPoint(x, y) {
+        for (let i = editorState.activeStickers.length - 1; i >= 0; i--) {
+            const sticker = editorState.activeStickers[i];
+            const localPoint = getStickerCanvasCoordinates(sticker, x, y);
+            if (!localPoint.inside) continue;
+            if (!isStickerPixelVisible(sticker, localPoint.canvasX, localPoint.canvasY)) continue;
+            return sticker;
+        }
+        return null;
+    }
+
+    function getLayoutSlots(layoutId, count, width, height) {
+        const outer = 58;
+        const gap = 18;
+        const full = { x: outer, y: outer, w: width - outer * 2, h: height - outer * 2 };
+
+        if (count <= 1 || layoutId === 'single') return [full];
+
+        if (layoutId === 'split-v') {
+            const slotWidth = (full.w - gap) / 2;
+            return [
+                { x: full.x, y: full.y, w: slotWidth, h: full.h },
+                { x: full.x + slotWidth + gap, y: full.y, w: slotWidth, h: full.h }
+            ];
+        }
+
+        if (layoutId === 'split-h') {
+            const slotHeight = (full.h - gap) / 2;
+            return [
+                { x: full.x, y: full.y, w: full.w, h: slotHeight },
+                { x: full.x, y: full.y + slotHeight + gap, w: full.w, h: slotHeight }
+            ];
+        }
+
+        if (count === 2) {
+            const slotWidth = (full.w - gap) / 2;
+            return [
+                { x: full.x, y: full.y, w: slotWidth, h: full.h },
+                { x: full.x + slotWidth + gap, y: full.y, w: slotWidth, h: full.h }
+            ];
+        }
+
+        if (count === 3) {
+            const topHeight = (full.h - gap) * 0.48;
+            const bottomHeight = full.h - gap - topHeight;
+            const topWidth = (full.w - gap) / 2;
+            return [
+                { x: full.x, y: full.y, w: topWidth, h: topHeight },
+                { x: full.x + topWidth + gap, y: full.y, w: topWidth, h: topHeight },
+                { x: full.x, y: full.y + topHeight + gap, w: full.w, h: bottomHeight }
+            ];
+        }
+
+        const slotWidth = (full.w - gap) / 2;
+        const slotHeight = (full.h - gap) / 2;
+        return [
+            { x: full.x, y: full.y, w: slotWidth, h: slotHeight },
+            { x: full.x + slotWidth + gap, y: full.y, w: slotWidth, h: slotHeight },
+            { x: full.x, y: full.y + slotHeight + gap, w: slotWidth, h: slotHeight },
+            { x: full.x + slotWidth + gap, y: full.y + slotHeight + gap, w: slotWidth, h: slotHeight }
+        ];
+    }
+
+    function drawImageCover(targetCtx, image, slot) {
+        const coverScale = Math.max(slot.w / image.width, slot.h / image.height);
+        const coverWidth = image.width * coverScale;
+        const coverHeight = image.height * coverScale;
+        const coverX = slot.x + (slot.w - coverWidth) / 2;
+        const coverY = slot.y + (slot.h - coverHeight) / 2;
+        const fitScale = Math.min(slot.w / image.width, slot.h / image.height);
+        const fitWidth = image.width * fitScale;
+        const fitHeight = image.height * fitScale;
+        const fitX = slot.x + (slot.w - fitWidth) / 2;
+        const fitY = slot.y + (slot.h - fitHeight) / 2;
+        const radius = 18;
+
+        targetCtx.save();
+        targetCtx.beginPath();
+        targetCtx.roundRect(slot.x, slot.y, slot.w, slot.h, radius);
+        targetCtx.clip();
+        targetCtx.fillStyle = '#edf2f7';
+        targetCtx.fillRect(slot.x, slot.y, slot.w, slot.h);
+
+        targetCtx.save();
+        targetCtx.globalAlpha = 0.22;
+        targetCtx.filter = 'blur(18px) saturate(1.05)';
+        targetCtx.drawImage(image, coverX, coverY, coverWidth, coverHeight);
+        targetCtx.restore();
+
+        const glow = targetCtx.createLinearGradient(slot.x, slot.y, slot.x, slot.y + slot.h);
+        glow.addColorStop(0, 'rgba(255,255,255,0.38)');
+        glow.addColorStop(1, 'rgba(255,255,255,0.08)');
+        targetCtx.fillStyle = glow;
+        targetCtx.fillRect(slot.x, slot.y, slot.w, slot.h);
+
+        targetCtx.drawImage(image, fitX, fitY, fitWidth, fitHeight);
+        targetCtx.strokeStyle = 'rgba(255,255,255,0.82)';
+        targetCtx.lineWidth = 1.5;
+        targetCtx.strokeRect(slot.x + 0.75, slot.y + 0.75, slot.w - 1.5, slot.h - 1.5);
+        targetCtx.restore();
+    }
+
+    function drawEditorFrame(targetCtx, width, height) {
+        const inset = 22;
+
+        if (editorState.frameStyle === 'none') return;
+
+        if (editorState.frameStyle === 'classic') {
+            targetCtx.save();
+            targetCtx.lineWidth = 18;
+            targetCtx.strokeStyle = '#ffffff';
+            targetCtx.shadowColor = 'rgba(15,23,42,0.25)';
+            targetCtx.shadowBlur = 14;
+            targetCtx.strokeRect(inset, inset, width - inset * 2, height - inset * 2);
+            targetCtx.restore();
+            return;
+        }
+
+        if (editorState.frameStyle === 'polaroid') {
+            targetCtx.save();
+            targetCtx.fillStyle = '#fff';
+            targetCtx.fillRect(18, 18, width - 36, 26);
+            targetCtx.fillRect(18, 18, 26, height - 36);
+            targetCtx.fillRect(width - 44, 18, 26, height - 36);
+            targetCtx.fillRect(18, height - 118, width - 36, 100);
+            targetCtx.restore();
+            return;
+        }
+
+        if (editorState.frameStyle === 'neon') {
+            const gradient = targetCtx.createLinearGradient(0, 0, width, height);
+            gradient.addColorStop(0, '#22d3ee');
+            gradient.addColorStop(0.5, '#818cf8');
+            gradient.addColorStop(1, '#f472b6');
+            targetCtx.save();
+            targetCtx.strokeStyle = gradient;
+            targetCtx.lineWidth = 14;
+            targetCtx.shadowColor = 'rgba(129,140,248,0.5)';
+            targetCtx.shadowBlur = 16;
+            targetCtx.strokeRect(inset, inset, width - inset * 2, height - inset * 2);
+            targetCtx.restore();
+            return;
+        }
+
+        if (editorState.frameStyle === 'film') {
+            targetCtx.save();
+            targetCtx.fillStyle = '#121212';
+            targetCtx.fillRect(16, 16, width - 32, 34);
+            targetCtx.fillRect(16, height - 50, width - 32, 34);
+            targetCtx.fillRect(16, 16, 34, height - 32);
+            targetCtx.fillRect(width - 50, 16, 34, height - 32);
+            targetCtx.fillStyle = '#fef08a';
+            for (let y = 74; y < height - 74; y += 62) {
+                targetCtx.fillRect(24, y, 14, 28);
+                targetCtx.fillRect(width - 38, y, 14, 28);
+            }
+            targetCtx.restore();
+        }
+    }
+
+    function drawSticker(targetCtx, sticker, image, includeSelection) {
+        const source = sticker.renderCanvas || image;
+        if (!source) return;
+        targetCtx.save();
+        targetCtx.translate(sticker.x, sticker.y);
+        targetCtx.rotate(sticker.rotation);
+        targetCtx.scale(sticker.scale * sticker.flipX, sticker.scale * sticker.flipY);
+        targetCtx.drawImage(source, -sticker.width / 2, -sticker.height / 2, sticker.width, sticker.height);
+
+        if (includeSelection && sticker.id === editorState.selectedStickerId) {
+            targetCtx.strokeStyle = 'rgba(34,197,94,0.95)';
+            targetCtx.lineWidth = 3 / sticker.scale;
+            targetCtx.setLineDash([10 / sticker.scale, 8 / sticker.scale]);
+            targetCtx.strokeRect(-sticker.width / 2 - 10 / sticker.scale, -sticker.height / 2 - 10 / sticker.scale, sticker.width + 20 / sticker.scale, sticker.height + 20 / sticker.scale);
+            targetCtx.setLineDash([]);
+        }
+
+        targetCtx.restore();
+    }
+
+    async function renderEditorScene(targetCtx, targetCanvas, includeSelection, token = editorState.renderToken) {
+        const width = targetCanvas.width;
+        const height = targetCanvas.height;
+        const selectedPhotos = getEditorSelectedPhotos();
+        const photoImages = await Promise.all(selectedPhotos.map(photo => loadImageCached(photo.dataUrl)));
+        const stickerSnapshot = editorState.activeStickers.map(sticker => ({ ...sticker }));
+        const stickerImages = await Promise.all(stickerSnapshot.map(sticker => loadImageCached(sticker.src)));
+
+        if (targetCtx === editorCtx && token !== editorState.renderToken) {
+            return false;
+        }
+
+        targetCtx.clearRect(0, 0, width, height);
+        targetCtx.fillStyle = '#f8fafc';
+        targetCtx.fillRect(0, 0, width, height);
+        targetCtx.fillStyle = '#e2e8f0';
+        targetCtx.fillRect(42, 42, width - 84, height - 84);
+
+        if (!photoImages.length) {
+            targetCtx.fillStyle = '#0f172a';
+            targetCtx.font = '600 34px Segoe UI';
+            targetCtx.textAlign = 'center';
+            targetCtx.fillText('Chưa có ảnh để chỉnh sửa', width / 2, height / 2);
+        } else {
+            const slots = getLayoutSlots(editorState.collageLayout, photoImages.length, width, height);
+            photoImages.slice(0, slots.length).forEach((image, index) => {
+                drawImageCover(targetCtx, image, slots[index]);
+            });
+        }
+
+        drawEditorFrame(targetCtx, width, height);
+        stickerSnapshot.forEach((sticker, index) => drawSticker(targetCtx, sticker, stickerImages[index], includeSelection));
+        return true;
+    }
+
+    async function renderEditorCanvas() {
+        if (!editorState.isOpen) return;
+        const token = ++editorState.renderToken;
+        const rendered = await renderEditorScene(editorCtx, editorCanvasEl, true, token);
+        if (!rendered || token !== editorState.renderToken) return;
+        syncStickerControls();
+        drawEraserCursor(editorCtx);
+    }
+
+    async function exportEditorImage() {
+        if (!editorState.isOpen) return;
+        await renderEditorScene(editorExportCtx, editorExportCanvas, false, -1);
+        const dataUrl = editorExportCanvas.toDataURL('image/png');
+        downloadDataUrl(dataUrl, `picai-editor-${Date.now()}.png`);
+        showToast('✓ Đã xuất ảnh PNG!', 2400);
+    }
+
+    canvasEl.addEventListener('click', () => {
+        if (!frozenGlass && !isCooldown) return;
+        frozenGlass = null;
+        activeGlass = null;
+        lastPos = null;
+        snapTimer = 0;
+        isCooldown = false;
+        updateGestureTag(null);
+        hudEl.classList.remove('hidden');
+    });
+
+    // Space hoặc nút nổi: chụp canvas hiện tại và lưu về máy
+    let toastTimer = null;
+    function saveCurrentFrame() {
+        if (!canvasEl.width || !canvasEl.height) return;
+        stopCaptureCountdown();
+
+        const save = document.createElement('canvas');
+        save.width  = canvasEl.width;
+        save.height = canvasEl.height;
+        const sCtx = save.getContext('2d');
+        sCtx.translate(save.width, 0);
+        sCtx.scale(-1, 1);
+        sCtx.drawImage(canvasEl, 0, 0);
+
+        const filename = `glass-${Date.now()}.png`;
+        const dataUrl = save.toDataURL('image/png');
+        pushCapturedPhoto(dataUrl);
+        downloadDataUrl(dataUrl, filename);
+
+        if (navigator.vibrate) navigator.vibrate(30);
+        showToast('✓ Đã lưu ảnh!');
+    }
+
+    document.addEventListener('keydown', e => {
+        if (e.code !== 'Space') return;
+        e.preventDefault();
+        startCaptureFlow();
+    });
+
+    captureBtnEl.addEventListener('click', startCaptureFlow);
+    captureDelayBtnEl.addEventListener('click', event => {
+        event.stopPropagation();
+        if (captureCountdownEndsAt) {
+            stopCaptureCountdown({ notifyCancel: true });
+            return;
+        }
+        toggleCaptureDelayMenu();
+    });
+    captureDelayMenuEl.addEventListener('click', event => {
+        const option = event.target.closest('[data-capture-delay]');
+        if (!option) return;
+        selectedCaptureDelay = Number(option.dataset.captureDelay);
+        renderCaptureDelayOptions();
+        toggleCaptureDelayMenu(false);
+        showToast(formatCaptureDelayToast(selectedCaptureDelay), 1700);
+    });
+    menuBtnEl.addEventListener('click', event => {
+        event.stopPropagation();
+        toggleModeMenu();
+    });
+    historyModeBtnEl.addEventListener('click', openHistoryDrawer);
+    photobookModeBtnEl.addEventListener('click', openResearchModal);
+    historyCloseBtnEl.addEventListener('click', closeHistoryDrawer);
+    researchCloseBtnEl.addEventListener('click', closeResearchModal);
+    overlayBackdropEl.addEventListener('click', () => {
+        toggleModeMenu(false);
+        toggleCaptureDelayMenu(false);
+        closeHistoryDrawer();
+        closeResearchModal();
+    });
+    historyListEl.addEventListener('click', event => {
+        const toggle = event.target.closest('[data-toggle-photo-id]');
+        if (toggle) {
+            toggleHistoryPhotoSelection(toggle.dataset.togglePhotoId);
+            return;
+        }
+
+        const item = event.target.closest('.history-item');
+        if (!item) return;
+        selectedHistoryPhotoId = item.dataset.photoId;
+        renderHistoryDrawer();
+    });
+    historyDownloadBtnEl.addEventListener('click', () => {
+        const photo = getSelectedHistoryPhoto();
+        if (!photo) return;
+        downloadDataUrl(photo.dataUrl, `${photo.id}.png`);
+        showToast('✓ Đã tải lại ảnh đã chọn!');
+    });
+    historyEditBtnEl.addEventListener('click', openEditorFromHistory);
+    historyClearSelectionBtnEl.addEventListener('click', clearHistoryPhotoSelection);
+    document.addEventListener('click', event => {
+        if (!modeMenuEl.classList.contains('visible')) return;
+        if (modeMenuEl.contains(event.target) || menuBtnEl.contains(event.target)) return;
+        toggleModeMenu(false);
+    });
+    document.addEventListener('click', event => {
+        if (!captureDelayMenuEl.classList.contains('visible')) return;
+        if (captureDelayMenuEl.contains(event.target) || captureDelayBtnEl.contains(event.target)) return;
+        toggleCaptureDelayMenu(false);
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        toggleModeMenu(false);
+        toggleCaptureDelayMenu(false);
+        closeHistoryDrawer();
+        closeResearchModal();
+        closeEditor();
+        stopCaptureCountdown({ notifyCancel: true });
+    });
+    editorCloseBtnEl.addEventListener('click', closeEditor);
+    editorDownloadBtnEl.addEventListener('click', exportEditorImage);
+    editorLayoutOptionsEl.addEventListener('click', event => {
+        const button = event.target.closest('[data-layout-id]');
+        if (!button) return;
+        editorState.collageLayout = button.dataset.layoutId;
+        renderEditorLayoutOptions();
+        renderEditorCanvas();
+    });
+    editorFrameOptionsEl.addEventListener('click', event => {
+        const button = event.target.closest('[data-frame-id]');
+        if (!button) return;
+        editorState.frameStyle = button.dataset.frameId;
+        renderEditorFrameOptions();
+        renderEditorCanvas();
+    });
+    editorPhotoPickerEl.addEventListener('click', event => {
+        const button = event.target.closest('[data-photo-id]');
+        if (!button) return;
+        toggleEditorPhotoSelection(button.dataset.photoId);
+    });
+    stickerSearchInputEl.addEventListener('input', event => {
+        editorState.stickerSearch = event.target.value;
+        renderStickerLibrary();
+    });
+    stickerListEl.addEventListener('click', event => {
+        const button = event.target.closest('[data-sticker-id]');
+        if (!button) return;
+        addStickerToEditor(button.dataset.stickerId);
+    });
+    stickerScaleRangeEl.addEventListener('input', event => {
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) return;
+        sticker.scale = Number(event.target.value) / 100;
+        renderEditorCanvas();
+    });
+    stickerRotationRangeEl.addEventListener('input', event => {
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) return;
+        sticker.rotation = Number(event.target.value) * Math.PI / 180;
+        renderEditorCanvas();
+    });
+    stickerEraserRangeEl.addEventListener('input', event => {
+        editorState.eraserRadius = Number(event.target.value);
+        syncStickerControls();
+    });
+    stickerEraserToggleBtnEl.addEventListener('click', () => {
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) return;
+        editorState.eraserEnabled = !editorState.eraserEnabled;
+        editorState.dragStickerId = null;
+        editorState.erasingStickerId = null;
+        editorState.eraseLastPoint = null;
+        editorState.eraserCursorVisible = false;
+        editorCanvasEl.classList.remove('dragging');
+        syncStickerControls();
+        renderEditorCanvas();
+    });
+    stickerFlipXBtnEl.addEventListener('click', () => {
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) return;
+        sticker.flipX *= -1;
+        renderEditorCanvas();
+    });
+    stickerFlipYBtnEl.addEventListener('click', () => {
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) return;
+        sticker.flipY *= -1;
+        renderEditorCanvas();
+    });
+    stickerRemoveBtnEl.addEventListener('click', () => {
+        if (!editorState.selectedStickerId) return;
+        editorState.activeStickers = editorState.activeStickers.filter(sticker => sticker.id !== editorState.selectedStickerId);
+        editorState.selectedStickerId = null;
+        renderEditorCanvas();
+    });
+    editorCanvasEl.addEventListener('pointerdown', event => {
+        if (!editorState.isOpen) return;
+        const point = getEditorCanvasPoint(event);
+        updateEraserCursor(point);
+        const sticker = findStickerAtPoint(point.x, point.y);
+
+        if (editorState.eraserEnabled) {
+            const targetSticker = sticker || getEditorSelectedSticker();
+            if (!targetSticker) {
+                editorState.selectedStickerId = null;
+                editorState.erasingStickerId = null;
+                renderEditorCanvas();
+                return;
+            }
+
+            editorState.selectedStickerId = targetSticker.id;
+            editorState.erasingStickerId = targetSticker.id;
+            editorState.eraseLastPoint = point;
+            eraseStickerStroke(targetSticker, point, point);
+            editorCanvasEl.setPointerCapture(event.pointerId);
+            renderEditorCanvas();
+            return;
+        }
+
+        if (!sticker) {
+            editorState.selectedStickerId = null;
+            renderEditorCanvas();
+            return;
+        }
+
+        editorState.selectedStickerId = sticker.id;
+        editorState.dragStickerId = sticker.id;
+        editorState.dragOffsetX = point.x - sticker.x;
+        editorState.dragOffsetY = point.y - sticker.y;
+        editorCanvasEl.setPointerCapture(event.pointerId);
+        editorCanvasEl.classList.add('dragging');
+        renderEditorCanvas();
+    });
+    editorCanvasEl.addEventListener('pointermove', event => {
+        const point = getEditorCanvasPoint(event);
+        if (editorState.eraserEnabled) {
+            updateEraserCursor(point);
+        }
+
+        if (editorState.erasingStickerId) {
+            const sticker = getEditorSelectedSticker();
+            if (!sticker) return;
+            eraseStickerStroke(sticker, editorState.eraseLastPoint || point, point);
+            editorState.eraseLastPoint = point;
+            renderEditorCanvas();
+            return;
+        }
+
+        if (editorState.eraserEnabled) {
+            renderEditorCanvas();
+            return;
+        }
+
+        if (!editorState.dragStickerId) return;
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) return;
+        sticker.x = clamp(point.x - editorState.dragOffsetX, 0, editorCanvasEl.width);
+        sticker.y = clamp(point.y - editorState.dragOffsetY, 0, editorCanvasEl.height);
+        renderEditorCanvas();
+    });
+    function stopStickerDrag(pointerId) {
+        editorState.dragStickerId = null;
+        editorState.erasingStickerId = null;
+        editorState.eraseLastPoint = null;
+        editorCanvasEl.classList.remove('dragging');
+        try {
+            if (pointerId !== undefined) editorCanvasEl.releasePointerCapture(pointerId);
+        } catch (error) {
+            // ignore capture release failures
+        }
+    }
+    editorCanvasEl.addEventListener('pointerup', event => stopStickerDrag(event.pointerId));
+    editorCanvasEl.addEventListener('pointercancel', event => stopStickerDrag(event.pointerId));
+    editorCanvasEl.addEventListener('pointerenter', event => {
+        if (!editorState.eraserEnabled) return;
+        updateEraserCursor(getEditorCanvasPoint(event));
+        renderEditorCanvas();
+    });
+    editorCanvasEl.addEventListener('pointerleave', () => {
+        if (!editorState.eraserEnabled) return;
+        editorState.eraserCursorVisible = false;
+        if (!editorState.erasingStickerId) {
+            renderEditorCanvas();
+        }
+    });
+    editorCanvasEl.addEventListener('wheel', event => {
+        if (!editorState.isOpen) return;
+        const sticker = getEditorSelectedSticker();
+        if (!sticker) return;
+        event.preventDefault();
+
+        if (event.shiftKey) {
+            sticker.rotation += event.deltaY < 0 ? 0.06 : -0.06;
+        } else {
+            const nextScale = sticker.scale * (event.deltaY < 0 ? 1.05 : 0.95);
+            sticker.scale = clamp(nextScale, 0.4, 2.2);
+        }
+
+        renderEditorCanvas();
+    }, { passive: false });
+
+    // Vẽ đường viền hình (dùng chung cho tất cả gesture)
+    function buildPath(glass) {
+        ctx.beginPath();
+        if (glass.type === 'triangle') {
+            ctx.moveTo(glass.p1.x, glass.p1.y);
+            ctx.lineTo(glass.p2.x, glass.p2.y);
+            ctx.lineTo(glass.p3.x, glass.p3.y);
+        } else if (glass.type === 'star') {
+            const points = glass.points?.length
+                ? glass.points
+                : buildStarPoints(glass.cx, glass.cy, glass.outerRadius, glass.innerRadius, glass.tipAngle);
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) {
+                ctx.lineTo(points[i].x, points[i].y);
+            }
+        } else if (glass.type === 'quad') {
+            ctx.moveTo(glass.tl.x, glass.tl.y);
+            ctx.lineTo(glass.tr.x, glass.tr.y);
+            ctx.lineTo(glass.br.x, glass.br.y);
+            ctx.lineTo(glass.bl.x, glass.bl.y);
+        } else if (glass.type === 'circle') {
+            ctx.ellipse(glass.cx, glass.cy, glass.rx, glass.ry, glass.angle, 0, Math.PI * 2);
+        }
+        ctx.closePath();
+    }
+
+    function drawGlass3D(liveImage, glass, progress) {
+        const isSnapped = progress >= 1;
+        ctx.save();
+
+        // Drop shadow (khi đã chụp)
+        if (isSnapped) {
+            buildPath(glass);
+            ctx.save();
+            ctx.shadowColor   = 'rgba(0,0,0,0.6)';
+            ctx.shadowBlur    = 40;
+            ctx.shadowOffsetX = 18;
+            ctx.shadowOffsetY = 18;
+            ctx.fillStyle = 'black';
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // Clip vùng hình
+        buildPath(glass);
+        ctx.clip();
+
+        // Nội dung bên trong (zoom nhẹ tạo hiệu ứng khúc xạ khi snapped)
+        const zoom = isSnapped ? 1.12 : 1.0;
+        ctx.translate(glass.cx, glass.cy);
+        ctx.scale(zoom, zoom);
+        ctx.translate(-glass.cx, -glass.cy);
+        ctx.drawImage(liveImage, 0, 0, canvasEl.width, canvasEl.height);
+
+        // Chromatic aberration khi snapped
+        if (isSnapped) {
+            ctx.globalCompositeOperation = 'screen';
+            ctx.globalAlpha = 0.07;
+            ctx.translate(4, 0);
+            ctx.drawImage(liveImage, 0, 0, canvasEl.width, canvasEl.height);
+            ctx.translate(-8, 0);
+            ctx.globalAlpha = 0.05;
+            ctx.drawImage(liveImage, 0, 0, canvasEl.width, canvasEl.height);
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.globalAlpha = 1;
+        }
+
+        ctx.restore();
+
+        // Iridescent shimmer bên trong khi snapped
+        if (isSnapped) {
+            ctx.save();
+            buildPath(glass);
+            ctx.clip();
+            const shimmer = ctx.createLinearGradient(
+                glass.cx - 150, glass.cy - 150,
+                glass.cx + 150, glass.cy + 150
+            );
+            shimmer.addColorStop(0,   'rgba(180, 160, 255, 0.18)');
+            shimmer.addColorStop(0.4, 'rgba(120, 220, 255, 0.08)');
+            shimmer.addColorStop(0.7, 'rgba(255, 200, 220, 0.12)');
+            shimmer.addColorStop(1,   'rgba(160, 255, 200, 0.06)');
+            ctx.fillStyle = shimmer;
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // Viền kính
+        ctx.save();
+        buildPath(glass);
+
+        if (isSnapped) {
+            const bevel = ctx.createLinearGradient(
+                glass.cx - 120, glass.cy - 120,
+                glass.cx + 120, glass.cy + 120
+            );
+            bevel.addColorStop(0,    'rgba(255,255,255,0.95)');
+            bevel.addColorStop(0.45, 'rgba(255,255,255,0.15)');
+            bevel.addColorStop(1,    'rgba(180,180,180,0.55)');
+            ctx.lineWidth   = 9;
+            ctx.strokeStyle = bevel;
+            ctx.stroke();
+
+            buildPath(glass);
+            ctx.lineWidth   = 2;
+            ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+            ctx.stroke();
+        } else {
+            const t = Math.max(0, Math.min(1, progress));
+            const r = Math.round(255 - (255 - 99)  * t);
+            const g = Math.round(255 - (255 - 102) * t);
+            const b = Math.round(255 - (255 - 241) * t);
+            ctx.lineWidth   = 3 + 5 * t;
+            ctx.strokeStyle = `rgba(${r},${g},${b},0.85)`;
+            ctx.setLineDash([]);
+            ctx.stroke();
+        }
+        ctx.restore();
+
+        if (!isSnapped && progress > 0.05) {
+            drawProgressRing(glass, progress);
+        }
+    }
+
+    // Vòng tiến trình dạng dashes quanh hình
+    function drawProgressRing(glass, progress) {
+        ctx.save();
+
+        let cx, cy, rx, ry;
+        if (glass.type === 'circle') {
+            cx = glass.cx; cy = glass.cy;
+            rx = glass.rx * 1.25; ry = glass.ry * 1.25;
+        } else if (glass.type === 'star') {
+            cx = glass.cx; cy = glass.cy;
+            rx = ry = glass.outerRadius * 1.28;
+        } else if (glass.type === 'triangle') {
+            cx = glass.cx; cy = glass.cy;
+            const pts = [glass.p1, glass.p2, glass.p3];
+            rx = ry = Math.max(...pts.map(p => Math.hypot(p.x - cx, p.y - cy))) * 1.2;
+        } else {
+            cx = glass.cx; cy = glass.cy;
+            const pts = [glass.tl, glass.tr, glass.br, glass.bl];
+            rx = ry = Math.max(...pts.map(p => Math.hypot(p.x - cx, p.y - cy))) * 1.18;
+        }
+
+        const perim   = 2 * Math.PI * Math.max(rx, ry);
+        const dashLen = perim / 24;
+        ctx.setLineDash([dashLen * 0.6, dashLen * 0.4]);
+
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.lineWidth   = 2;
+        ctx.strokeStyle = 'rgba(99,102,241,0.25)';
+        ctx.stroke();
+
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, -Math.PI / 2, 0, Math.PI * 2 * progress);
+        ctx.lineWidth   = 3;
+        ctx.strokeStyle = `rgba(139,92,246,${0.5 + 0.4 * progress})`;
+        ctx.shadowColor = '#8b5cf6';
+        ctx.shadowBlur  = 8;
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
+    // Gesture detection
+    function isFingerExtended(landmarks, tipIdx, pipIdx) {
+        const wrist = landmarks[0];
+        const tip   = landmarks[tipIdx];
+        const pip   = landmarks[pipIdx];
+        return Math.hypot(tip.x - wrist.x, tip.y - wrist.y) >
+               Math.hypot(pip.x - wrist.x, pip.y - wrist.y);
+    }
+
+    function getHandPoint(landmarks, index, width, height) {
+        return {
+            x: landmarks[index].x * width,
+            y: landmarks[index].y * height
+        };
+    }
+
+    function getPalmCenter(landmarks, width, height) {
+        const palmIndices = [0, 5, 9, 13, 17];
+        const palmPoints = palmIndices.map(index => getHandPoint(landmarks, index, width, height));
+        return {
+            x: palmPoints.reduce((sum, point) => sum + point.x, 0) / palmPoints.length,
+            y: palmPoints.reduce((sum, point) => sum + point.y, 0) / palmPoints.length
+        };
+    }
+
+    function buildStarPoints(cx, cy, outerRadius, innerRadius, tipAngle = -Math.PI / 2) {
+        const points = [];
+        for (let i = 0; i < 10; i++) {
+            const radius = i % 2 === 0 ? outerRadius : innerRadius;
+            const angle = tipAngle + (Math.PI / 5) * i;
+            points.push({
+                x: cx + Math.cos(angle) * radius,
+                y: cy + Math.sin(angle) * radius
+            });
+        }
+        return points;
+    }
+
+    // Tam giác: cái (4) + trỏ (8) + giữa (12), áp út gập
+    function checkTriangleGesture(lm) {
+        return  isFingerExtended(lm,  4,  3) &&
+                isFingerExtended(lm,  8,  6) &&
+                isFingerExtended(lm, 12, 10) &&
+               !isFingerExtended(lm, 16, 14) &&
+               !isFingerExtended(lm, 20, 18);
+    }
+
+    // Peace: trỏ + giữa duỗi, áp út + út gập, đầu ngón tách đủ rộng để tạo chữ V
+    function checkPeaceGesture(lm) {
+        const hasVShape =
+            isFingerExtended(lm, 8, 6) &&
+            isFingerExtended(lm, 12, 10) &&
+           !isFingerExtended(lm, 16, 14) &&
+           !isFingerExtended(lm, 20, 18);
+
+        if (!hasVShape) return false;
+
+        const tipSpread = Math.hypot(lm[8].x - lm[12].x, lm[8].y - lm[12].y);
+        const baseSpread = Math.hypot(lm[5].x - lm[9].x, lm[5].y - lm[9].y);
+        return tipSpread > baseSpread * 0.78;
+    }
+
+    function checkOpenPalmGesture(lm) {
+        return  isFingerExtended(lm,  4,  3) &&
+                isFingerExtended(lm,  8,  6) &&
+                isFingerExtended(lm, 12, 10) &&
+                isFingerExtended(lm, 16, 14) &&
+                isFingerExtended(lm, 20, 18);
+    }
+
+    // L-Frame: cái + trỏ, 3 ngón còn lại gập
+    function checkLFrameGesture(lm) {
+        return  isFingerExtended(lm,  4,  3)  &&
+                isFingerExtended(lm,  8,  6)  &&
+               !isFingerExtended(lm, 12, 10) &&
+               !isFingerExtended(lm, 16, 14) &&
+               !isFingerExtended(lm, 20, 18);
+    }
+
+    // Vòng tròn kéo dãn: cái (4) + trỏ (8) + út (20), 2 tay
+    function checkStretchCircleGesture(h1, h2) {
+        return  isFingerExtended(h1,  4,  3) && isFingerExtended(h2,  4,  3) &&
+                isFingerExtended(h1,  8,  6) && isFingerExtended(h2,  8,  6) &&
+               !isFingerExtended(h1, 12, 10) && !isFingerExtended(h2, 12, 10) &&
+               !isFingerExtended(h1, 16, 14) && !isFingerExtended(h2, 16, 14) &&
+                isFingerExtended(h1, 20, 18) && isFingerExtended(h2, 20, 18);
+    }
+
+    function updateGestureTag(name) {
+        if (name !== lastGesture) {
+            lastGesture = name;
+            gestureTagEl.textContent = name || '';
+            gestureTagEl.classList.toggle('visible', !!name);
+        }
+    }
+
+    function onResults(results) {
+        if (!loadingEl.classList.contains('hidden')) {
+            loadingEl.classList.add('hidden');
+            setTimeout(() => { loadingEl.style.display = 'none'; }, 600);
+        }
+
+        const w = canvasEl.width  = videoEl.videoWidth  || 1280;
+        const h = canvasEl.height = videoEl.videoHeight || 720;
+
+        if (frozenCanvas.width !== w || frozenCanvas.height !== h) {
+            frozenCanvas.width = w; frozenCanvas.height = h;
+        }
+
+        let currentGestureData = null;
+        let gestureName        = null;
+
+        if (results.multiHandLandmarks?.length > 0) {
+            const hand1 = results.multiHandLandmarks[0];
+
+            // Peace: 1 tay -> ngôi sao
+            if (checkPeaceGesture(hand1)) {
+                const palmCenter = getPalmCenter(hand1, w, h);
+                const indexTip = getHandPoint(hand1, 8, w, h);
+                const middleTip = getHandPoint(hand1, 12, w, h);
+                const indexBase = getHandPoint(hand1, 5, w, h);
+                const pinkyBase = getHandPoint(hand1, 17, w, h);
+                const fingerMid = {
+                    x: (indexTip.x + middleTip.x) / 2,
+                    y: (indexTip.y + middleTip.y) / 2
+                };
+                const palmWidth = Math.hypot(indexBase.x - pinkyBase.x, indexBase.y - pinkyBase.y);
+                const fingertipReach = Math.max(
+                    Math.hypot(indexTip.x - palmCenter.x, indexTip.y - palmCenter.y),
+                    Math.hypot(middleTip.x - palmCenter.x, middleTip.y - palmCenter.y)
+                );
+                const outerRadius = clamp(Math.max(fingertipReach * 0.9, palmWidth * 0.82), 48, Math.min(w, h) * 0.25);
+                const innerRadius = outerRadius * 0.48;
+                const tipAngle = Math.atan2(fingerMid.y - palmCenter.y, fingerMid.x - palmCenter.x);
+                currentGestureData = {
+                    type: 'star',
+                    cx: palmCenter.x,
+                    cy: palmCenter.y,
+                    outerRadius,
+                    innerRadius,
+                    tipAngle,
+                    points: buildStarPoints(palmCenter.x, palmCenter.y, outerRadius, innerRadius, tipAngle)
+                };
+                gestureName = '✌️ NGÔI SAO';
+            }
+
+            // Tam giác: cái + trỏ + giữa (1 tay)
+            else if (checkTriangleGesture(hand1)) {
+                const p1 = getHandPoint(hand1, 4, w, h);
+                const p2 = getHandPoint(hand1, 8, w, h);
+                const p3 = getHandPoint(hand1, 12, w, h);
+                currentGestureData = {
+                    type: 'triangle', p1, p2, p3,
+                    cx: (p1.x + p2.x + p3.x) / 3,
+                    cy: (p1.y + p2.y + p3.y) / 3,
+                };
+                gestureName = '🖖 TAM GIÁC';
+            }
+
+            // Open palm: 1 tay -> vòng tròn lớn
+            else if (checkOpenPalmGesture(hand1)) {
+                const palmCenter = getPalmCenter(hand1, w, h);
+                const fingertips = [4, 8, 12, 16, 20].map(index => getHandPoint(hand1, index, w, h));
+                const indexBase = getHandPoint(hand1, 5, w, h);
+                const pinkyBase = getHandPoint(hand1, 17, w, h);
+                const palmWidth = Math.hypot(indexBase.x - pinkyBase.x, indexBase.y - pinkyBase.y);
+                const fingertipReach = Math.max(
+                    ...fingertips.map(point => Math.hypot(point.x - palmCenter.x, point.y - palmCenter.y))
+                );
+                const radius = clamp(Math.max(fingertipReach * 1.18, palmWidth * 1.28), 72, Math.min(w, h) * 0.34);
+                currentGestureData = {
+                    type: 'circle',
+                    cx: palmCenter.x,
+                    cy: palmCenter.y,
+                    rx: radius,
+                    ry: radius,
+                    angle: 0,
+                    isLarge: true
+                };
+                gestureName = '🖐️ VÒNG TRÒN LỚN';
+            }
+
+            if (results.multiHandLandmarks.length === 2) {
+                const hand2     = results.multiHandLandmarks[1];
+                const leftHand  = hand1[8].x < hand2[8].x ? hand1 : hand2;
+                const rightHand = hand1[8].x < hand2[8].x ? hand2 : hand1;
+
+                // Tứ giác 3D (L-Frame, 2 tay)
+                if (checkLFrameGesture(hand1) && checkLFrameGesture(hand2)) {
+                    const ex = 1.1;
+                    const tl = { x: leftHand[8].x  * w, y: leftHand[8].y  * h };
+                    const tr = { x: rightHand[8].x * w, y: rightHand[8].y * h };
+                    const br = { x: rightHand[4].x * w, y: rightHand[4].y * h };
+                    const bl = { x: leftHand[4].x  * w, y: leftHand[4].y  * h };
+                    const cx = (tl.x + tr.x + br.x + bl.x) / 4;
+                    const cy = (tl.y + tr.y + br.y + bl.y) / 4;
+                    const expand = p => ({ x: cx + (p.x - cx) * ex, y: cy + (p.y - cy) * ex });
+                    currentGestureData = { type: 'quad', tl: expand(tl), tr: expand(tr), br: expand(br), bl: expand(bl), cx, cy };
+                    gestureName = '👆 TỨ GIÁC 3D';
+                }
+
+                // Vòng tròn kéo dãn: cái + trỏ + út (2 tay)
+                else if (checkStretchCircleGesture(hand1, hand2)) {
+                    const lIndex = { x: leftHand[8].x  * w, y: leftHand[8].y  * h };
+                    const rIndex = { x: rightHand[8].x * w, y: rightHand[8].y * h };
+                    const lThumb = { x: leftHand[4].x  * w, y: leftHand[4].y  * h };
+                    const rThumb = { x: rightHand[4].x * w, y: rightHand[4].y * h };
+                    const lPinky = { x: leftHand[20].x * w, y: leftHand[20].y * h };
+                    const rPinky = { x: rightHand[20].x* w, y: rightHand[20].y* h };
+                    // Tâm = trung điểm 2 cặp (trỏ+cái) của 2 tay
+                    const lAnchor = { x: (lIndex.x + lThumb.x) / 2, y: (lIndex.y + lThumb.y) / 2 };
+                    const rAnchor = { x: (rIndex.x + rThumb.x) / 2, y: (rIndex.y + rThumb.y) / 2 };
+                    const cx = (lAnchor.x + rAnchor.x) / 2;
+                    const cy = (lAnchor.y + rAnchor.y) / 2;
+                    // rx: kéo 2 tay ra xa/gần → thay đổi chiều ngang
+                    const rx = Math.hypot(lAnchor.x - rAnchor.x, lAnchor.y - rAnchor.y) / 2 * 1.1;
+                    // ry: nâng/hạ ngón út → thay đổi chiều dọc
+                    const pinkyMid = { x: (lPinky.x + rPinky.x) / 2, y: (lPinky.y + rPinky.y) / 2 };
+                    const ry = Math.hypot(pinkyMid.x - cx, pinkyMid.y - cy) * 1.15;
+                    const angle = Math.atan2(rAnchor.y - lAnchor.y, rAnchor.x - lAnchor.x);
+                    currentGestureData = { type: 'circle', cx, cy, rx, ry, angle, isResizable: true };
+                    gestureName = '🤙 VÒNG TRÒN';
+                }
+            }
+        }
+
+        let currentProgress = 0;
+        const isFrameLocked = !!frozenGlass && isCooldown;
+
+        if (isFrameLocked) {
+            activeGlass = null;
+            lastPos = null;
+            snapTimer = 0;
+        } else if (currentGestureData) {
+            if (!isCooldown) {
+                if (frozenGlass) frozenGlass = null;
+
+                if (lastPos) {
+                    const dist = Math.hypot(lastPos.cx - currentGestureData.cx, lastPos.cy - currentGestureData.cy);
+                    if (dist < STABILITY_THRESHOLD) {
+                        if (snapTimer === 0) snapTimer = Date.now();
+                        currentProgress = (Date.now() - snapTimer) / SNAP_DELAY;
+                        if (currentProgress >= 1) {
+                            frozenGlass = currentGestureData;
+                            frozenCtx.drawImage(results.image, 0, 0, w, h);
+                            isCooldown      = true;
+                            snapTimer       = 0;
+                            currentProgress = 0;
+                            flashFrames     = 10;
+                            hudEl.classList.add('hidden');
+                        }
+                    } else {
+                        snapTimer = 0;
+                        lastPos   = currentGestureData;
+                    }
+                } else {
+                    lastPos   = currentGestureData;
+                    snapTimer = Date.now();
+                }
+            }
+            activeGlass = currentGestureData;
+        } else {
+            activeGlass = null;
+            lastPos     = null;
+            snapTimer   = 0;
+            isCooldown  = false;
+        }
+
+        updateGestureTag(isFrameLocked ? lastGesture : gestureName);
+
+        ctx.clearRect(0, 0, w, h);
+
+        const usesFrozenBg = frozenGlass && !activeGlass;
+        ctx.drawImage(usesFrozenBg ? frozenCanvas : results.image, 0, 0, w, h);
+
+        if (frozenGlass && !activeGlass) {
+            drawGlass3D(results.image, frozenGlass, 1.0);
+        }
+
+        if (activeGlass && !isCooldown) {
+            drawGlass3D(results.image, activeGlass, currentProgress);
+        }
+
+        if (results.multiHandLandmarks && !frozenGlass) {
+            for (const hand of results.multiHandLandmarks) {
+                drawConnectors(ctx, hand, HAND_CONNECTIONS, { color: 'rgba(255,255,255,0.1)', lineWidth: 2 });
+                drawLandmarks(ctx, hand, { color: 'rgba(255,255,255,0.3)', lineWidth: 1, radius: 2 });
+            }
+        }
+
+        if (flashFrames > 0) {
+            ctx.fillStyle = `rgba(255,255,255,${flashFrames * 0.09})`;
+            ctx.fillRect(0, 0, w, h);
+            flashFrames--;
+        }
+    }
+
+    const hands = new Hands({
+        locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+        maxNumHands:            2,
+        modelComplexity:        1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence:  0.5,
+    });
+
+    hands.onResults(onResults);
+
+    const preferredCameraResolution = getPreferredCameraResolution();
+    let cameraRunning = false;
+    let resumeCameraAfterVisibility = false;
+    let cameraStartPromise = null;
+
+    const camera = new Camera(videoEl, {
+        onFrame: async () => { await hands.send({ image: videoEl }); },
+        width: preferredCameraResolution.width,
+        height: preferredCameraResolution.height,
+    });
+
+    function handleCameraError(err) {
+        console.error('Camera error:', err);
+        loadingEl.style.display = 'none';
+        errorEl.classList.add('visible');
+        cameraRunning = false;
+        resumeCameraAfterVisibility = false;
+    }
+
+    async function startCamera() {
+        if (cameraRunning) return;
+        if (cameraStartPromise) return cameraStartPromise;
+
+        cameraStartPromise = camera.start()
+            .then(() => {
+                cameraRunning = true;
+                resumeCameraAfterVisibility = true;
+                errorEl.classList.remove('visible');
+            })
+            .catch(err => {
+                handleCameraError(err);
+                throw err;
+            })
+            .finally(() => {
+                cameraStartPromise = null;
+            });
+
+        return cameraStartPromise;
+    }
+
+    function stopCamera() {
+        try {
+            camera.stop();
+        } catch (error) {
+            console.error('Camera stop error:', error);
+        }
+        cameraRunning = false;
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            toggleCaptureDelayMenu(false);
+            stopCaptureCountdown();
+            resumeCameraAfterVisibility = cameraRunning;
+            stopCamera();
+            return;
+        }
+
+        if (resumeCameraAfterVisibility) {
+            startCamera().catch(() => {});
+        }
+    });
+
+    window.addEventListener('pagehide', () => {
+        toggleCaptureDelayMenu(false);
+        stopCaptureCountdown();
+        resumeCameraAfterVisibility = false;
+        stopCamera();
+    });
+
+    window.addEventListener('beforeunload', () => {
+        toggleCaptureDelayMenu(false);
+        stopCaptureCountdown();
+        resumeCameraAfterVisibility = false;
+        stopCamera();
+    });
+
+    renderCaptureDelayOptions();
+    startCamera().catch(() => {});
+</script>
+</body>
+</html>
+

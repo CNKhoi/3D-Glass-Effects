@@ -27,6 +27,7 @@ const loadingEl = document.getElementById("loading");
 const errorEl = document.getElementById("error-screen");
 const retryBtn = document.getElementById("retry-btn");
 const captureBtn = document.getElementById("capture-btn");
+const captureBtnImgEl = captureBtn.querySelector("img");
 const clearBtn = document.getElementById("clear-btn");
 const guideBtn = document.getElementById("guide-btn");
 const guidePanel = document.getElementById("guide-panel");
@@ -40,6 +41,7 @@ const historyModeBtnEl = document.getElementById("history-mode-btn");
 const photobookModeBtnEl = document.getElementById("photobook-mode-btn");
 const overlayBackdropEl = document.getElementById("overlay-backdrop");
 const captureDelayBtnEl = document.getElementById("capture-delay-btn");
+const captureDelayBtnImgEl = captureDelayBtnEl.querySelector("img");
 const captureDelayValueEl = document.getElementById("capture-delay-value");
 const captureDelayMenuEl = document.getElementById("capture-delay-menu");
 const captureCountdownEl = document.getElementById("capture-countdown");
@@ -1293,46 +1295,21 @@ syncLayoutMode();
 toggleClearButton();
 boot();
 
-function createStickerDataUrl({ emoji, start, end, accent = "#ffffff" }) {
-    const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-            <defs>
-                <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0%" stop-color="${start}"/>
-                    <stop offset="100%" stop-color="${end}"/>
-                </linearGradient>
-            </defs>
-            <rect x="24" y="24" width="208" height="208" rx="54" fill="url(#g)"/>
-            <rect x="36" y="36" width="184" height="184" rx="44" fill="rgba(255,255,255,0.14)" stroke="rgba(255,255,255,0.24)" stroke-width="4"/>
-            <circle cx="128" cy="128" r="86" fill="rgba(255,255,255,0.08)"/>
-            <text x="128" y="146" text-anchor="middle" font-size="96" font-family="Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, sans-serif" fill="${accent}">${emoji}</text>
-        </svg>
-    `.trim();
-
-    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-}
-
 function buildStickerLibrary() {
-    const presets = [
-        { id: "sticker-glasses", name: "3d-glasses", label: "3D Glasses", emoji: "😎", start: "#38bdf8", end: "#6366f1" },
-        { id: "sticker-heart", name: "heart", label: "Heart", emoji: "❤️", start: "#fb7185", end: "#f97316" },
-        { id: "sticker-star", name: "star", label: "Star", emoji: "⭐", start: "#facc15", end: "#f59e0b" },
-        { id: "sticker-fire", name: "fire", label: "Fire", emoji: "🔥", start: "#fb7185", end: "#f97316" },
-        { id: "sticker-rainbow", name: "rainbow", label: "Rainbow", emoji: "🌈", start: "#60a5fa", end: "#f472b6" },
-        { id: "sticker-crown", name: "crown", label: "Crown", emoji: "👑", start: "#facc15", end: "#fb7185" },
-        { id: "sticker-sparkles", name: "sparkles", label: "Sparkles", emoji: "✨", start: "#22d3ee", end: "#a78bfa" },
-        { id: "sticker-camera", name: "camera", label: "Camera", emoji: "📸", start: "#34d399", end: "#10b981" },
-        { id: "sticker-smile", name: "smile", label: "Smile", emoji: "😊", start: "#f9a8d4", end: "#c084fc" },
-        { id: "sticker-speech", name: "speech", label: "Speech", emoji: "💬", start: "#93c5fd", end: "#38bdf8" },
-        { id: "sticker-sun", name: "sun", label: "Sun", emoji: "☀️", start: "#fbbf24", end: "#fb7185" },
-        { id: "sticker-party", name: "party", label: "Party", emoji: "🥳", start: "#22c55e", end: "#3b82f6" }
+    const filenames = [
+        "3d-glasses.png", "angry.png", "axolotl (1).png", "axolotl (2).png", "axolotl.png", "beanie.png",
+        "chef-hat.png", "cherry-pie.png", "cigarette.png", "corgi.png", "fire.png", "frog (1).png", "frog.png",
+        "glasses.png", "handcuff.png", "happy.png", "heart-glasses.png", "hello.png", "hipster.png",
+        "necklace (1).png", "necklace (2).png", "necklace.png", "paper-plane.png", "party-hat.png", "pendant.png",
+        "proud.png", "rainbow.png", "read.png", "relaxed.png", "rose.png", "sad.png", "santa-hat.png",
+        "smile.png", "smoke.png", "studying.png", "sun.png", "tired.png"
     ];
 
-    return presets.map((preset) => ({
-        id: preset.id,
-        name: preset.name,
-        label: preset.label,
-        src: createStickerDataUrl(preset)
+    return filenames.map((name, index) => ({
+        id: `sticker-def-${index}`,
+        name,
+        label: name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " "),
+        src: `./sticker/${encodeURIComponent(name)}`
     }));
 }
 
@@ -2281,7 +2258,31 @@ function stopStickerDrag(pointerId) {
     }
 }
 
+function setCaptureButtonFallback(isFallbackVisible) {
+    captureBtn.classList.toggle("fallback-visible", isFallbackVisible);
+}
+
+function setCaptureDelayButtonFallback(isFallbackVisible) {
+    captureDelayBtnEl.classList.toggle("fallback-visible", isFallbackVisible);
+}
+
 function initializeExtendedUi() {
+    if (captureBtnImgEl) {
+        captureBtnImgEl.addEventListener("load", () => setCaptureButtonFallback(false));
+        captureBtnImgEl.addEventListener("error", () => setCaptureButtonFallback(true));
+        if (captureBtnImgEl.complete) {
+            setCaptureButtonFallback(!(captureBtnImgEl.naturalWidth > 0));
+        }
+    }
+
+    if (captureDelayBtnImgEl) {
+        captureDelayBtnImgEl.addEventListener("load", () => setCaptureDelayButtonFallback(false));
+        captureDelayBtnImgEl.addEventListener("error", () => setCaptureDelayButtonFallback(true));
+        if (captureDelayBtnImgEl.complete) {
+            setCaptureDelayButtonFallback(!(captureDelayBtnImgEl.naturalWidth > 0));
+        }
+    }
+
     renderCaptureDelayOptions();
     renderHistoryDrawer();
 
