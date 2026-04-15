@@ -57,8 +57,12 @@ const historyPreviewTimeEl = document.getElementById("history-preview-time");
 const historySelectionCountEl = document.getElementById("history-selection-count");
 const historyDownloadBtnEl = document.getElementById("history-download-btn");
 const historyEditBtnEl = document.getElementById("history-edit-btn");
+const historyDeleteBtnEl = document.getElementById("history-delete-btn");
+const historyImportBtnEl = document.getElementById("history-import-btn");
+const historyClearAllBtnEl = document.getElementById("history-clear-all-btn");
 const historyClearSelectionBtnEl = document.getElementById("history-clear-selection-btn");
 const historyListEl = document.getElementById("history-list");
+const photoImportInputEl = document.getElementById("photo-import-input");
 const researchModalEl = document.getElementById("research-modal");
 const researchCloseBtnEl = document.getElementById("research-close-btn");
 const editorOverlayEl = document.getElementById("editor-overlay");
@@ -84,6 +88,8 @@ const editorExportCanvasEl = document.getElementById("editor-export-canvas");
 const editorExportCtx = editorExportCanvasEl.getContext("2d", { alpha: true });
 
 const MAX_CAPTURE_HISTORY = 10;
+const STORAGE_CAPTURE_HISTORY_KEY = "glass-motion-history-v2";
+const STORAGE_UI_PREFS_KEY = "glass-motion-ui-prefs-v1";
 const COLLAGE_LAYOUTS = [
     { id: "single", label: "1 ảnh", hint: "Toàn khung" },
     { id: "split-v", label: "Ngang 2", hint: "Trái / phải" },
@@ -1322,6 +1328,182 @@ function formatCaptureTime(timestamp) {
     }).format(timestamp);
 }
 
+function canUseStorage() {
+    try {
+        return typeof window !== "undefined" && "localStorage" in window;
+    } catch (error) {
+        return false;
+    }
+}
+
+function createPhotoLabel(prefix = "Ảnh", createdAt = Date.now()) {
+    return `${prefix} ${new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }).format(createdAt)}`;
+}
+
+function sanitizeCapturedPhoto(entry) {
+    if (!entry || typeof entry !== "object" || typeof entry.dataUrl !== "string" || !entry.dataUrl.startsWith("data:image/")) {
+        return null;
+    }
+
+    const createdAt = Number(entry.createdAt) || Date.now();
+    const prefix = typeof entry.label === "string" && entry.label.trim() ? entry.label.trim() : "Ảnh";
+    return {
+        id: typeof entry.id === "string" && entry.id ? entry.id : `photo-${createdAt}-${Math.random().toString(36).slice(2, 7)}`,
+        dataUrl: entry.dataUrl,
+        createdAt,
+        label: prefix
+    };
+}
+
+function saveCaptureHistory() {
+    if (!canUseStorage()) {
+        return;
+    }
+
+    try {
+        window.localStorage.setItem(STORAGE_CAPTURE_HISTORY_KEY, JSON.stringify(capturedPhotos.slice(0, MAX_CAPTURE_HISTORY)));
+    } catch (error) {
+        console.warn("Không lưu được lịch sử ảnh:", error);
+    }
+}
+
+function loadCaptureHistory() {
+    if (!canUseStorage()) {
+        return;
+    }
+
+    try {
+        const raw = window.localStorage.getItem(STORAGE_CAPTURE_HISTORY_KEY);
+        if (!raw) {
+            return;
+        }
+
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) {
+            return;
+        }
+
+        capturedPhotos = parsed
+            .map(sanitizeCapturedPhoto)
+            .filter(Boolean)
+            .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+            .slice(0, MAX_CAPTURE_HISTORY);
+
+        if (capturedPhotos.length) {
+            selectedHistoryPhotoId = capturedPhotos[0].id;
+            selectedHistoryPhotoIds = [capturedPhotos[0].id];
+        }
+    } catch (error) {
+        console.warn("Không đọc được lịch sử ảnh:", error);
+    }
+}
+
+function saveUiPreferences() {
+    if (!canUseStorage()) {
+        return;
+    }
+
+    try {
+        window.localStorage.setItem(STORAGE_UI_PREFS_KEY, JSON.stringify({
+            selectedCaptureDelay,
+            collageLayout: editorState.collageLayout,
+            frameStyle: editorState.frameStyle
+        }));
+    } catch (error) {
+        console.warn("Không lưu được cấu hình giao diện:", error);
+    }
+}
+
+function loadUiPreferences() {
+    if (!canUseStorage()) {
+        return;
+    }
+
+    try {
+        const raw = window.localStorage.getItem(STORAGE_UI_PREFS_KEY);
+        if (!raw) {
+            return;
+        }
+
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.selectedCaptureDelay === "number") {
+            selectedCaptureDelay = parsed.selectedCaptureDelay;
+        }
+        if (typeof parsed.collageLayout === "string") {
+            editorState.collageLayout = parsed.collageLayout;
+        }
+        if (typeof parsed.frameStyle === "string") {
+            editorState.frameStyle = parsed.frameStyle;
+        }
+    } catch (error) {
+        console.warn("Không đọc được cấu hình giao diện:", error);
+    }
+}
+
+function deleteHistoryPhoto(photoId) {
+    if (!photoId) {
+        return;
+    }
+
+    capturedPhotos = capturedPhotos.filter((photo) => photo.id !== photoId);
+    selectedHistoryPhotoIds = selectedHistoryPhotoIds.filter((id) => id !== photoId);
+    if (selectedHistoryPhotoId === photoId) {
+        selectedHistoryPhotoId = capturedPhotos[0]?.id ?? "";
+    }
+    saveCaptureHistory();
+    renderHistoryDrawer();
+}
+
+function clearAllHistoryPhotos() {
+    capturedPhotos = [];
+    selectedHistoryPhotoId = "";
+    selectedHistoryPhotoIds = [];
+    saveCaptureHistory();
+    renderHistoryDrawer();
+}
+
+async function importPhotosFromFiles(fileList) {
+    const files = Array.from(fileList || []).filter((file) => file.type.startsWith("image/"));
+    if (!files.length) {
+        showToast("Không có ảnh hợp lệ để nhập.", 1800);
+        return;
+    }
+
+    const availableSlots = Math.max(0, MAX_CAPTURE_HISTORY - capturedPhotos.length);
+    if (!availableSlots) {
+        showToast("Lịch sử đã đầy. Hãy xóa bớt ảnh trước khi nhập.", 2200);
+        return;
+    }
+
+    const selectedFiles = files.slice(0, availableSlots);
+    const imported = [];
+
+    for (const file of selectedFiles) {
+        const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error(`Không thể đọc file ${file.name}`));
+            reader.readAsDataURL(file);
+        });
+
+        imported.push({
+            id: `photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            dataUrl,
+            createdAt: Date.now(),
+            label: file.name.replace(/\.[^.]+$/, "") || createPhotoLabel("Ảnh nhập")
+        });
+    }
+
+    capturedPhotos = [...imported.reverse(), ...capturedPhotos].slice(0, MAX_CAPTURE_HISTORY);
+    if (capturedPhotos.length) {
+        selectedHistoryPhotoId = capturedPhotos[0].id;
+        selectedHistoryPhotoIds = [capturedPhotos[0].id];
+    }
+    saveCaptureHistory();
+    renderHistoryDrawer();
+    showToast(`✓ Đã nhập ${imported.length} ảnh vào lịch sử.`, 2200);
+}
+
 function downloadDataUrl(dataUrl, filename) {
     const link = document.createElement("a");
     link.href = dataUrl;
@@ -1375,6 +1557,7 @@ function renderCaptureDelayOptions() {
         button.classList.toggle("active", isActive);
         button.setAttribute("aria-pressed", String(isActive));
     });
+    saveUiPreferences();
 }
 
 function toggleCaptureDelayMenu(force) {
@@ -1450,7 +1633,7 @@ function pushCapturedPhoto(dataUrl, options = {}) {
         id: `photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         dataUrl,
         createdAt: Date.now(),
-        label: `${labelPrefix} ${capturedPhotos.length + 1}`
+        label: createPhotoLabel(labelPrefix)
     };
 
     capturedPhotos.unshift(entry);
@@ -1460,6 +1643,7 @@ function pushCapturedPhoto(dataUrl, options = {}) {
 
     selectedHistoryPhotoId = entry.id;
     selectedHistoryPhotoIds = [entry.id];
+    saveCaptureHistory();
     renderHistoryDrawer();
 }
 
@@ -1586,7 +1770,9 @@ function renderHistoryDrawer() {
         historySelectionCountEl.textContent = "";
         historyDownloadBtnEl.disabled = true;
         historyEditBtnEl.disabled = true;
+        historyDeleteBtnEl.disabled = true;
         historyClearSelectionBtnEl.disabled = true;
+        historyClearAllBtnEl.disabled = true;
         return;
     }
 
@@ -1619,7 +1805,9 @@ function renderHistoryDrawer() {
     if (!selectedPhoto) {
         historyDownloadBtnEl.disabled = true;
         historyEditBtnEl.disabled = true;
+        historyDeleteBtnEl.disabled = true;
         historyClearSelectionBtnEl.disabled = true;
+        historyClearAllBtnEl.disabled = true;
         return;
     }
 
@@ -1633,10 +1821,12 @@ function renderHistoryDrawer() {
     const editorPhotos = getHistoryPhotosForEditor();
     historyDownloadBtnEl.disabled = false;
     historyEditBtnEl.disabled = editorPhotos.length === 0;
+    historyDeleteBtnEl.disabled = false;
     historyEditBtnEl.textContent = editorPhotos.length > 1
         ? `Mở chỉnh sửa (${editorPhotos.length} ảnh)`
         : "Mở chỉnh sửa";
     historyClearSelectionBtnEl.disabled = selectedHistoryPhotoIds.length === 0;
+    historyClearAllBtnEl.disabled = !capturedPhotos.length;
 }
 
 function loadImageCached(src) {
@@ -2267,6 +2457,9 @@ function setCaptureDelayButtonFallback(isFallbackVisible) {
 }
 
 function initializeExtendedUi() {
+    loadUiPreferences();
+    loadCaptureHistory();
+
     if (captureBtnImgEl) {
         captureBtnImgEl.addEventListener("load", () => setCaptureButtonFallback(false));
         captureBtnImgEl.addEventListener("error", () => setCaptureButtonFallback(true));
@@ -2347,6 +2540,26 @@ function initializeExtendedUi() {
         showToast("✓ Đã tải lại ảnh đã chọn!", 2000);
     });
     historyEditBtnEl.addEventListener("click", openEditorFromHistory);
+    historyDeleteBtnEl.addEventListener("click", () => {
+        const photo = getSelectedHistoryPhoto();
+        if (!photo) {
+            return;
+        }
+        deleteHistoryPhoto(photo.id);
+        showToast("Đã xóa ảnh khỏi lịch sử.", 1800);
+    });
+    historyImportBtnEl.addEventListener("click", () => photoImportInputEl?.click());
+    photoImportInputEl?.addEventListener("change", async (event) => {
+        await importPhotosFromFiles(event.target.files);
+        event.target.value = "";
+    });
+    historyClearAllBtnEl.addEventListener("click", () => {
+        if (!capturedPhotos.length) {
+            return;
+        }
+        clearAllHistoryPhotos();
+        showToast("Đã xóa toàn bộ lịch sử ảnh.", 1800);
+    });
     historyClearSelectionBtnEl.addEventListener("click", clearHistoryPhotoSelection);
 
     document.addEventListener("click", (event) => {
@@ -2369,6 +2582,7 @@ function initializeExtendedUi() {
         }
 
         editorState.collageLayout = button.dataset.layoutId;
+        saveUiPreferences();
         renderEditorLayoutOptions();
         renderEditorCanvas();
     });
@@ -2380,6 +2594,7 @@ function initializeExtendedUi() {
         }
 
         editorState.frameStyle = button.dataset.frameId;
+        saveUiPreferences();
         renderEditorFrameOptions();
         renderEditorCanvas();
     });

@@ -1718,6 +1718,14 @@ kbd {
         grid-template-columns: 1fr;
     }
 
+    .drawer-footer-actions {
+        justify-content: stretch;
+    }
+
+    .drawer-footer-actions .history-action {
+        flex: 1 1 220px;
+    }
+
     #history-preview {
         grid-column: 1;
         grid-row: auto;
@@ -1800,6 +1808,14 @@ kbd {
     .action-rail {
         width: calc(100vw - 20px);
         grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .drawer-footer-actions {
+        flex-direction: column;
+    }
+
+    .drawer-footer-actions .history-action {
+        width: 100%;
     }
 
     .guide-panel {

@@ -9,8 +9,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="./styles.css">
-    <script defer src="./app.js"></script>
+    <link rel="stylesheet" href="./styles_improved.css">
+    <script defer src="./app_improved.js"></script>
 </head>
 <body>
     <div class="ambient ambient-a"></div>
@@ -74,12 +74,17 @@
                     <div class="history-actions">
                         <button class="history-action primary" id="history-download-btn" type="button">Tải xuống</button>
                         <button class="history-action secondary" id="history-edit-btn" type="button">Mở chỉnh sửa</button>
+                        <button class="history-action secondary" id="history-delete-btn" type="button">Xóa ảnh</button>
                         <button class="history-action secondary" id="history-clear-selection-btn" type="button">Bỏ chọn ảnh ghép</button>
                     </div>
                     <div class="history-note">Bấm vào thumbnail để xem ảnh. Bấm nút dấu cộng hoặc dấu tích trên từng ô để chọn tối đa 4 ảnh ghép trước khi mở editor.</div>
                 </div>
             </div>
             <div id="history-list"></div>
+            <div class="drawer-footer-actions">
+                <button class="history-action secondary" id="history-import-btn" type="button">Nhập ảnh từ máy</button>
+                <button class="history-action secondary danger" id="history-clear-all-btn" type="button">Xóa toàn bộ lịch sử</button>
+            </div>
         </div>
     </aside>
 
@@ -262,6 +267,8 @@
             </section>
         </div>
     </main>
+
+    <input id="photo-import-input" type="file" accept="image/*" multiple hidden>
 
     <div id="toast" class="toast is-hidden" aria-live="polite"></div>
     <canvas id="editor-export-canvas" width="1080" height="1350" hidden aria-hidden="true"></canvas>
